@@ -274,9 +274,11 @@ export async function runPtyInterceptor({
 
           handlingApproval = true;
           disableForwarding(); // hand stdin to the approval prompt
+          try { pty.pause(); } catch {} // freeze PTY output while prompting
 
           const decision = await promptApproval(enrichedResult);
 
+          try { pty.resume(); } catch {} // unfreeze PTY output
           enableForwarding(); // resume PTY input forwarding
           handlingApproval = false;
 

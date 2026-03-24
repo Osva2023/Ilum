@@ -241,51 +241,47 @@ export async function promptApproval(result) {
     return "deny";
   }
 
-  // ── interactive readline ─────────────────────────────────────────────────
+  // ── interactive keypress (raw stdin, no readline) ───────────────────────
   return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stderr,
-      terminal: true,
-    });
+    // Remove all existing stdin data listeners temporarily
+    const existingListeners = process.stdin.listeners("data").slice();
+    existingListeners.forEach(l => process.stdin.removeListener("data", l));
 
-    // Switch to raw mode so we get single keypresses without Enter.
-    if (process.stdin.setRawMode) {
-      process.stdin.setRawMode(true);
+    // Enable raw mode for single-keypress capture
+    const wasRaw = process.stdin.isRaw;
+    if (process.stdin.isTTY && process.stdin.setRawMode) {
+      try { process.stdin.setRawMode(true); } catch {}
     }
-
+    process.stdin.resume();
     process.stderr.write("  Choice: ");
 
-    function onData(chunk) {
-      const key = chunk.toString().toLowerCase().trim();
+    function onKey(chunk) {
+      const key = chunk.toString().toLowerCase();
+      const firstChar = key[0];
 
-      if (key === "a") {
-        cleanup();
-        console.error(chalk.green("approve\n"));
-        resolve("approve");
-      } else if (key === "d") {
-        cleanup();
-        console.error(chalk.red("deny\n"));
-        resolve("deny");
-      } else if (key === "q" || key === "\u0003" /* Ctrl-C */) {
-        cleanup();
-        console.error(chalk.gray("quit\n"));
-        resolve("quit");
+      if (firstChar === "a") {
+        cleanup("approve", chalk.green("approve"));
+      } else if (firstChar === "d") {
+        cleanup("deny", chalk.red("deny"));
+      } else if (firstChar === "q" || firstChar === "\u0003") {
+        cleanup("quit", chalk.gray("quit"));
       } else {
-        // Re-render the prompt for unrecognized keys
         process.stderr.write("\r  Choice (a/d/q): ");
       }
     }
 
-    function cleanup() {
-      if (process.stdin.setRawMode) {
-        process.stdin.setRawMode(false);
+    function cleanup(decision, label) {
+      process.stdin.removeListener("data", onKey);
+      // Restore raw mode to previous state
+      if (process.stdin.isTTY && process.stdin.setRawMode) {
+        try { process.stdin.setRawMode(wasRaw || false); } catch {}
       }
-      rl.close();
-      process.stdin.off("data", onData);
+      // Restore previous listeners
+      existingListeners.forEach(l => process.stdin.on("data", l));
+      process.stderr.write(label + "\n\n");
+      resolve(decision);
     }
 
-    process.stdin.resume();
-    process.stdin.on("data", onData);
+    process.stdin.on("data", onKey);
   });
 }
