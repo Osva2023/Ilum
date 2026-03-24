@@ -72,7 +72,7 @@ export async function sendTelegramAlert(
   { command, level, reason, sessionId, agent },
   config
 ) {
-  const { token, chatId } = resolveCredentials(config);
+  const { token, chatId, extraChatIds } = resolveCredentials(config);
 
   if (!token || !chatId) {
     process.stderr.write(
@@ -94,8 +94,6 @@ export async function sendTelegramAlert(
     "",
     `Reply /approve_${shortSession} or /deny_${shortSession}`,
   ].join("\n");
-
-  const { token, chatId, extraChatIds } = resolveCredentials(config);
   const allChatIds = [chatId, ...extraChatIds].filter(Boolean);
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
 
