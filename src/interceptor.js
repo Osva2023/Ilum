@@ -9,15 +9,18 @@
  * Phase 0 limitation:
  *   This is a "log-based" detection mode.  We parse the agent's textual
  *   output for command patterns rather than intercepting actual syscalls.
- *   True PTY / syscall interception is planned for Phase 1.
+ *   True PTY / syscall interception is in Phase 1 (src/pty-interceptor.js).
+ *
+ * Phase 1 additions (backwards-compatible):
+ *   • Accepts optional `config` and `stats` parameters so bin/agentguard can
+ *     honour autoApprove / autoDeny config entries and collect session stats.
  *
  * How it works:
- *   1. agentguard sets process.env.SHELL to a wrapper script (future Phase 1).
- *   2. The child agent is spawned with stdio inherited for stdin, but piped
- *      for stdout/stderr so we can read its output.
- *   3. Each line of output is classified.  SAFE lines are forwarded to the
- *      terminal immediately.  Risky lines pause further output and prompt.
- *   4. On deny, the session exits and the snapshot (if any) can be restored.
+ *   1. The child agent is spawned with stdio: stdin inherited, stdout/stderr
+ *      piped so we can read its output line-by-line.
+ *   2. Each line is classified.  SAFE lines are forwarded immediately.
+ *      Risky lines pause both streams and route to the approval prompt.
+ *   3. On deny, the session exits and the snapshot (if any) is restored.
  */
 
 import { spawn } from "child_process";
@@ -59,12 +62,20 @@ function extractCommand(line) {
 /**
  * Launch the agent and intercept its output.
  *
- * @param {Object} options
- * @param {string}   options.agent      - Agent binary name (e.g. "codex")
- * @param {string[]} options.agentArgs  - Arguments to pass to the agent
- * @param {string}   options.stashRef   - Snapshot stash ref (may be null)
+ * @param {Object}   options
+ * @param {string}   options.agent       - Agent binary name (e.g. "codex")
+ * @param {string[]} options.agentArgs   - Arguments to pass to the agent
+ * @param {string}   [options.stashRef]  - Snapshot stash ref (may be null)
+ * @param {Object}   [options.config]    - Merged AgentGuard config object
+ * @param {Object}   [options.stats]     - Shared stats object (mutated in place)
+ * @returns {Promise<number>}  Agent exit code
  */
-export async function runInterceptor({ agent, agentArgs, stashRef }) {
+export async function runInterceptor({ agent, agentArgs, stashRef, config, stats }) {
+  // Provide a default stats object so callers don't have to.
+  if (!stats) {
+    stats = { commandsSeen: 0, intercepted: 0, approved: 0, blocked: {} };
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn(agent, agentArgs, {
       // stdin flows directly from the user's terminal
@@ -86,9 +97,34 @@ export async function runInterceptor({ agent, agentArgs, stashRef }) {
       const cmd = extractCommand(line);
 
       if (cmd) {
+        stats.commandsSeen++;
+
         const result = classify(cmd);
 
+        // ── config: autoDeny ───────────────────────────────────────────────
+        if (config?.autoDeny?.includes(result.level)) {
+          stats.blocked[result.level] = (stats.blocked[result.level] || 0) + 1;
+          logDenied({ command: cmd, level: result.level, agent });
+          console.error(
+            chalk.red(`\n[AgentGuard] Auto-denied (${result.level}): ${cmd}`)
+          );
+          doBlock({ cmd, level: result.level });
+          return;
+        }
+
+        // ── config: autoApprove ────────────────────────────────────────────
+        if (
+          config?.autoApprove?.includes(result.level) &&
+          requiresApproval(result)
+        ) {
+          stats.approved++;
+          logApproved({ command: cmd, level: result.level, agent });
+          stream.write(line + "\n");
+          return;
+        }
+
         if (requiresApproval(result)) {
+          stats.intercepted++;
           logIntercepted({ command: cmd, level: result.level, reason: result.reason, agent });
 
           // Pause data events while we wait for the user
@@ -98,6 +134,7 @@ export async function runInterceptor({ agent, agentArgs, stashRef }) {
           const decision = await promptApproval(result);
 
           if (decision === "approve") {
+            stats.approved++;
             logApproved({ command: cmd, level: result.level, agent });
             // Forward the line and resume
             stream.write(line + "\n");
@@ -105,22 +142,9 @@ export async function runInterceptor({ agent, agentArgs, stashRef }) {
             child.stderr.resume();
           } else {
             // deny or quit
+            stats.blocked[result.level] = (stats.blocked[result.level] || 0) + 1;
             logDenied({ command: cmd, level: result.level, agent });
-            console.error(chalk.red("\n[AgentGuard] Operation blocked."));
-
-            if (stashRef) {
-              console.error(chalk.yellow("[AgentGuard] Restoring snapshot…"));
-              const snap = restoreSnapshot(stashRef);
-              console.error(
-                snap.restored
-                  ? chalk.green(`[AgentGuard] ${snap.message}`)
-                  : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
-              );
-            }
-
-            logSessionEnd(agent);
-            child.kill("SIGTERM");
-            process.exit(1);
+            doBlock({ cmd, level: result.level });
           }
           return;
         }
@@ -128,6 +152,25 @@ export async function runInterceptor({ agent, agentArgs, stashRef }) {
 
       // SAFE or non-command line — pass through immediately
       stream.write(line + "\n");
+    }
+
+    function doBlock({ cmd, level }) {
+      void cmd; // used by callers for logging before calling here
+      console.error(chalk.red("\n[AgentGuard] Operation blocked."));
+
+      if (stashRef && config?.snapshot?.restoreOnDeny !== false) {
+        console.error(chalk.yellow("[AgentGuard] Restoring snapshot\u2026"));
+        const snap = restoreSnapshot(stashRef);
+        console.error(
+          snap.restored
+            ? chalk.green(`[AgentGuard] ${snap.message}`)
+            : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
+        );
+      }
+
+      logSessionEnd(agent);
+      child.kill("SIGTERM");
+      process.exit(1);
     }
 
     // ── stdout handler ─────────────────────────────────────────────────────

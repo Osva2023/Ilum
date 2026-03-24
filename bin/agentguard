@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * AgentGuard CLI entry point
+ * AgentGuard CLI entry point  (Phase 1)
  *
  * Usage:
  *   agentguard <agent> [agent-args...]
@@ -9,12 +9,20 @@
  *   agentguard codex
  *   agentguard claude --print "refactor my auth module"
  *   agentguard aider --model gpt-4
+ *
+ * Phase 1 behaviour:
+ *   • Loads config from agentguard.config.json (local) or ~/.agentguard/config.json
+ *   • Auto-detects real TTY → uses PTY interceptor (node-pty)
+ *   • Falls back to log-based interceptor when node-pty is unavailable or no TTY
+ *   • Prints a session summary box on exit
  */
 
 import chalk from "chalk";
 import { createSnapshot } from "../src/snapshot.js";
 import { runInterceptor } from "../src/interceptor.js";
 import { logSessionStart, LOG_FILE } from "../src/logger.js";
+import { loadConfig } from "../src/config.js";
+import { printSessionSummary } from "../src/summary.js";
 
 // ─── parse args ───────────────────────────────────────────────────────────────
 
@@ -22,7 +30,7 @@ const [, , agent, ...agentArgs] = process.argv;
 
 if (!agent || agent === "--help" || agent === "-h") {
   console.log(`
-${chalk.bold.cyan("AgentGuard")} ${chalk.gray("v0.1.0")} — Universal AI agent shell wrapper
+${chalk.bold.cyan("AgentGuard")} ${chalk.gray("v0.2.0")} — Universal AI agent shell wrapper
 
 ${chalk.bold("Usage:")}
   agentguard <agent> [agent-args...]
@@ -37,9 +45,19 @@ ${chalk.bold("What it does:")}
   • Wraps the agent process and monitors its output for dangerous commands
   • Prompts you to approve or deny risky operations before they execute
   • Writes a full audit log to ${LOG_FILE}
+
+${chalk.bold("Config (optional):")}
+  Create agentguard.config.json in the project directory (or
+  ~/.agentguard/config.json globally) to customise behaviour.
+  Schema: autoApprove, autoDeny, rules.disabled, rules.custom,
+          snapshot.enabled, snapshot.restoreOnDeny, auditLog.path
 `);
   process.exit(0);
 }
+
+// ─── load config ─────────────────────────────────────────────────────────────
+
+const config = loadConfig();
 
 // ─── banner ───────────────────────────────────────────────────────────────────
 
@@ -48,34 +66,98 @@ console.error(
     chalk.white(` Wrapping agent: ${chalk.yellow(agent)}`) +
     (agentArgs.length ? chalk.gray(` ${agentArgs.join(" ")}`) : "")
 );
-console.error(chalk.gray(`  Audit log: ${LOG_FILE}\n`));
+console.error(chalk.gray(`  Audit log: ${LOG_FILE}`));
 
 // ─── session start ────────────────────────────────────────────────────────────
 
 logSessionStart(agent);
+const startTime = Date.now();
+
+// Shared stats object — mutated by whichever interceptor runs.
+const stats = {
+  commandsSeen: 0,
+  intercepted: 0,
+  approved: 0,
+  blocked: {},
+};
 
 // ─── snapshot ─────────────────────────────────────────────────────────────────
 
-const snap = createSnapshot();
-if (snap.created) {
-  console.error(chalk.green(`[AgentGuard] Snapshot: ${snap.message}`));
-} else {
-  console.error(chalk.gray(`[AgentGuard] ${snap.message}`));
+let snap = { created: false, message: "Snapshots disabled by config" };
+
+if (config.snapshot.enabled !== false) {
+  snap = createSnapshot();
+  if (snap.created) {
+    console.error(chalk.green(`[AgentGuard] Snapshot: ${snap.message}`));
+  } else {
+    console.error(chalk.gray(`[AgentGuard] ${snap.message}`));
+  }
 }
 
 console.error(""); // blank line before agent output begins
 
+// ─── choose interceptor ───────────────────────────────────────────────────────
+
+// Use the PTY interceptor when:
+//   1. stdout is a real TTY (i.e. not piped/redirected)
+//   2. node-pty native bindings are available
+// Fall back to log-based interceptor otherwise (CI, pipes, no native build).
+
+let runSession;
+
+if (process.stdout.isTTY) {
+  try {
+    const { runPtyInterceptor, PTY_AVAILABLE } = await import(
+      "../src/pty-interceptor.js"
+    );
+
+    if (PTY_AVAILABLE) {
+      console.error(chalk.cyan("[AgentGuard] Mode: PTY interceptor\n"));
+      runSession = () =>
+        runPtyInterceptor({
+          agent,
+          agentArgs,
+          stashRef: snap.stashRef,
+          config,
+          stats,
+        });
+    } else {
+      console.error(
+        chalk.yellow(
+          "[AgentGuard] node-pty not available — falling back to log-based mode\n"
+        )
+      );
+    }
+  } catch {
+    // Import itself failed
+    console.error(
+      chalk.yellow("[AgentGuard] PTY interceptor failed to load — using log-based mode\n")
+    );
+  }
+}
+
+if (!runSession) {
+  console.error(chalk.gray("[AgentGuard] Mode: log-based interceptor\n"));
+  runSession = () =>
+    runInterceptor({
+      agent,
+      agentArgs,
+      stashRef: snap.stashRef,
+      config,
+      stats,
+    });
+}
+
 // ─── run ─────────────────────────────────────────────────────────────────────
 
 try {
-  const exitCode = await runInterceptor({
-    agent,
-    agentArgs,
-    stashRef: snap.stashRef,
-  });
+  const exitCode = await runSession();
+
+  printSessionSummary({ agent, startTime, stats, snapshot: snap });
 
   process.exit(exitCode);
 } catch (err) {
   console.error(chalk.red(`[AgentGuard] Fatal error: ${err.message}`));
+  printSessionSummary({ agent, startTime, stats, snapshot: snap });
   process.exit(1);
 }

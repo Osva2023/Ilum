@@ -4,10 +4,16 @@
  * Renders a bordered approval UI in the terminal and reads a single keypress
  * response (A / D / Q).  Falls back gracefully when stdin is not a TTY
  * (e.g. in CI or when piped) by defaulting to "deny" with a clear message.
+ *
+ * Phase 1 additions:
+ *   • buildDiffPreview(command) — generates context-sensitive previews
+ *     (files at risk, current file contents, git diff/log snippets) shown
+ *     inside the approval box between the risk info and the action line.
  */
 
 import readline from "readline";
 import chalk from "chalk";
+import { execSync } from "child_process";
 
 // ─── box drawing ─────────────────────────────────────────────────────────────
 
@@ -70,6 +76,107 @@ function levelIcon(level) {
   }
 }
 
+// ─── diff preview ─────────────────────────────────────────────────────────────
+
+/**
+ * Build a context-sensitive diff/preview for commands that modify the
+ * filesystem or repository.  Returns an array of plain-text lines (already
+ * truncated to fit inside the box) to show between the risk info and the
+ * [A/D/Q] prompt.  Returns an empty array when nothing useful can be shown.
+ *
+ * Supported cases:
+ *   • rm …          → list files that would be deleted (via find)
+ *   • > .env / config files → show first 20 lines of the target file
+ *   • git reset --hard → show git diff --stat HEAD (what would be lost)
+ *   • git push --force → show git log --oneline -5 (commits at risk)
+ *
+ * @param {string} command
+ * @returns {string[]}
+ */
+export function buildDiffPreview(command) {
+  const lines = [];
+
+  // Helper: run a shell command safely, return trimmed output or "".
+  function run(cmd) {
+    try {
+      return execSync(cmd, { timeout: 3000, encoding: "utf8" }).trim();
+    } catch {
+      return "";
+    }
+  }
+
+  // Helper: truncate a line so it fits in the box with a 4-char indent.
+  const MAX = BOX_WIDTH - 4;
+  function fit(s) {
+    return s.length > MAX ? s.slice(0, MAX - 1) + "…" : s;
+  }
+
+  try {
+    // ── rm — list files that would be deleted ────────────────────────────
+    if (/\brm\b/.test(command)) {
+      // Remove flags like -rf, -r, -f, --recursive, etc., then grab paths.
+      const paths = command
+        .replace(/^(?:.*\s)?rm\s+/, "")
+        .replace(/(?:^|\s)-[rRfFivI]+/g, "")
+        .replace(/--(?:recursive|force|interactive\S*)/g, "")
+        .trim();
+
+      if (paths) {
+        const found = run(`find ${paths} -maxdepth 4 2>/dev/null | head -10`);
+        if (found) {
+          lines.push(chalk.gray("  Files that would be deleted:"));
+          for (const f of found.split("\n").slice(0, 8)) {
+            lines.push(chalk.gray("    " + fit(f)));
+          }
+        }
+      }
+    }
+
+    // ── redirect to .env / config files — show current content ───────────
+    const redirectMatch = command.match(
+      />+\s*(\.env\S*|[^\s]*\.(?:json|yaml|yml|toml|ini|conf|cfg|env))\s*$/
+    );
+    if (redirectMatch) {
+      const filePath = redirectMatch[1];
+      const content = run(`head -20 "${filePath}" 2>/dev/null`);
+      if (content) {
+        lines.push(chalk.gray(`  Current content of ${filePath}:`));
+        for (const l of content.split("\n").slice(0, 10)) {
+          lines.push(chalk.gray("    " + fit(l)));
+        }
+      }
+    }
+
+    // ── git reset --hard — show what uncommitted changes would be lost ────
+    if (/git\s+reset\b.*--hard/.test(command)) {
+      const diffStat = run("git diff --stat HEAD 2>/dev/null");
+      if (diffStat) {
+        lines.push(chalk.gray("  Changes that would be lost:"));
+        for (const l of diffStat.split("\n").slice(0, 8)) {
+          lines.push(chalk.gray("    " + fit(l)));
+        }
+      } else {
+        lines.push(chalk.gray("  No uncommitted changes would be lost."));
+      }
+    }
+
+    // ── git push --force — show recent commits at risk ────────────────────
+    if (/git\s+push\b.*(?:--force|-f)\b/.test(command)) {
+      const log = run("git log --oneline -5 2>/dev/null");
+      if (log) {
+        lines.push(chalk.gray("  Recent commits at risk:"));
+        for (const l of log.split("\n")) {
+          lines.push(chalk.gray("    " + fit(l)));
+        }
+      }
+    }
+  } catch {
+    // Never crash the approval prompt due to a preview failure.
+  }
+
+  return lines;
+}
+
 // ─── main export ─────────────────────────────────────────────────────────────
 
 /**
@@ -93,6 +200,9 @@ export async function promptApproval(result) {
   const reasonLine = `  Reason:   ${chalk.white(reason || "unknown")}`;
   const actionLine = `  ${chalk.green("[A] Approve")}   ${chalk.red("[D] Deny")}   ${chalk.gray("[Q] Quit session")}`;
 
+  // Build diff preview (may be empty)
+  const diffLines = buildDiffPreview(command);
+
   console.error(""); // blank line before box
   console.error(boxTop());
   console.error(boxRow(header));
@@ -100,6 +210,12 @@ export async function promptApproval(result) {
   console.error(boxRow(cmdLine));
   console.error(boxRow(riskLine));
   console.error(boxRow(reasonLine));
+  if (diffLines.length > 0) {
+    console.error(boxDivider());
+    for (const dl of diffLines) {
+      console.error(boxRow(dl));
+    }
+  }
   console.error(boxDivider());
   console.error(boxRow(actionLine));
   console.error(boxBottom());
