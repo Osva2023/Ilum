@@ -58,6 +58,22 @@ AgentGuard showed the `package.json` diff in the Post-Action Review. The develop
 
 ---
 
+## Real scenarios
+
+**"Set up OpenAI integration in my app"**
+The agent wired up the integration correctly. It also added `OPENAI_API_KEY=sk-proj-...` to `.env` — pulling a key from somewhere in context. AgentGuard surfaced the diff. The key was an old one from a different project. Rolled back, avoided leaking the wrong credentials into production.
+
+**"Clean up unused files in /utils"**
+The agent ran `rm -rf ./utils/legacy`. AgentGuard flagged it as CRITICAL before execution. The developer said no — `legacy/` had a PDF parser used by a background job nobody had touched in months. It would have been gone.
+
+**"Fix the merge conflict in feature/payments and push"**
+The agent resolved the conflict, then ran `git push --force`. AgentGuard caught it before it executed. Three teammates had pushed commits to that branch since the last pull. They would have been gone.
+
+**"Add rate limiting to the API"**
+The agent added `express-rate-limit` correctly. It also bumped the Node engine requirement in `package.json` from `>=16` to `>=20` because "it uses modern syntax." AgentGuard showed the `package.json` diff in the Post-Action Review. Railway was running Node 18. That bump would have broken the deploy.
+
+---
+
 ## How AgentGuard helps
 
 - **PTY Interceptor** — Wraps the agent process and catches dangerous shell commands mid-execution (`rm -rf`, `git push --force`, pipe-to-shell, etc.) before they run
@@ -179,6 +195,24 @@ AgentGuard doesn't tell you what prompts to write. It shows you what happened so
 
 ---
 
+## Prompts and side effects
+
+Agents are trained to be helpful and thorough. That means they often do more than you asked — not because they're broken, but because they're trying to do a good job. When you say "set up the database connection," a helpful agent might also update `.env`, adjust the config, and add a health check endpoint. You asked for one thing and got four.
+
+The more vague the prompt, the more the agent fills in the blanks with its own judgment. Specific prompts scope the work. Vague prompts open the door.
+
+| Prompt | Side effect risk |
+|---|---|
+| "Refactor auth.js" | Low — scoped to one file |
+| "Clean up the codebase" | High — agent decides what "clean" means |
+| "Set up the database connection" | Medium — may touch `.env`, config files |
+| "Fix the bug" | Medium — agent may "fix" related things it notices |
+| "Optimize performance" | High — agent may change deps, configs, build setup |
+
+AgentGuard doesn't tell you what prompts to write. It shows you what happened so you can learn the pattern.
+
+---
+
 ## Risk levels
 
 | Level | Examples | Behavior |
@@ -268,6 +302,34 @@ If you have repo access and want to put AgentGuard through its paces, here are s
    mkdir /tmp/no-git-test && cd /tmp/no-git-test
    agentguard claude --print "create a hello.js file"
    ```
+
+Found something unexpected? Open an issue — that's exactly the feedback needed right now.
+
+---
+
+## Try this — beta tester checklist
+
+If you have repo access and want to put AgentGuard through its paces, here are specific scenarios worth testing:
+
+1. **Basic wrap** — Run any agent you already use, just prefix with `agentguard`. No other changes. See the session summary at the end.
+
+2. **Trigger the file watcher** — Ask Claude: `agentguard claude --print "add a new environment variable called APP_SECRET"`. Watch AgentGuard surface the `.env` diff in the Post-Action Review.
+
+3. **Test rollback** — Same as above, but when the review appears, choose `[R]ollback`. Verify the file is back to its original state.
+
+4. **Trigger the PTY interceptor** — Ask Codex or aider to "delete old test files". See if AgentGuard flags the `rm` command before it runs. Try approving and denying.
+
+5. **Vague prompt test** — Give a broad prompt: `agentguard claude --print "clean up this project and remove anything unused"`. Count how many files AgentGuard logged vs. how many you expected.
+
+6. **Check the audit log** — After any session, run:
+   ```bash
+   cat ~/.agentguard/audit.log | tail -20
+   ```
+   Every intercepted command and review decision is there.
+
+7. **Skip all** — Run a session where the agent touches sensitive files, then choose `[S]kip all` in the Post-Action Review. Verify everything was kept as-is.
+
+8. **Non-git repo** — Run AgentGuard in a directory without git. It should handle gracefully — no crash, snapshot skipped with a clear message.
 
 Found something unexpected? Open an issue — that's exactly the feedback needed right now.
 
