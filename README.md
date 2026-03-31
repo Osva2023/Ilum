@@ -28,9 +28,20 @@ AI coding agents are powerful but unpredictable. Claude Code might refactor `aut
 
 ## Install
 
+**From npm** (coming soon):
 ```bash
 npm install -g agentguard
 ```
+
+**From source** (for beta testers with repo access):
+```bash
+git clone https://github.com/morphius101/agentguard.git
+cd agentguard
+npm install
+npm install -g .
+```
+
+**Requirements:** Node.js 18+, git (for snapshots and rollback)
 
 ---
 
