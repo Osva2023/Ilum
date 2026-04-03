@@ -34,28 +34,10 @@ import {
 } from "./logger.js";
 import { restoreSnapshot } from "./snapshot.js";
 import chalk from "chalk";
-
-// ─── command-pattern heuristic ───────────────────────────────────────────────
-
-/**
- * Rough heuristic: does this line look like a shell command being executed?
- * We match common prefixes like "$ ", "% ", "> ", or lines starting with
- * known command names.  This is intentionally broad for Phase 0.
- *
- * @param {string} line
- * @returns {string|null} The extracted command, or null if not a command line.
- */
-function extractCommand(line) {
-  // Shell prompt prefixes: "$ cmd", "% cmd", "> cmd"
-  const promptMatch = line.match(/^[>$%#]\s+(.+)$/);
-  if (promptMatch) return promptMatch[1].trim();
-
-  // Lines like "Running: rm -rf ..." or "Executing: git push --force"
-  const runningMatch = line.match(/^(?:running|executing|exec|run):\s+(.+)$/i);
-  if (runningMatch) return runningMatch[1].trim();
-
-  return null;
-}
+import { decodeCommand } from "./decoder.js";
+import { bus } from "./event-bus.js";
+import { evaluate } from "./correlator.js";
+import { filterFired, suppression } from "./suppression.js";
 
 // ─── core ────────────────────────────────────────────────────────────────────
 
@@ -92,10 +74,30 @@ export async function runInterceptor({ agent, agentArgs, stashRef, config, stats
     /**
      * Process a complete line from the agent's output stream.
      * Returns a promise so the stream can be paused while prompting.
+     *
+     * Pipeline:
+     *   1. decodeCommand() normalises the line into a canonical event (or null).
+     *   2. The event is pushed to the shared event bus.
+     *   3. Correlation rules are evaluated; any newly-fired rules surface as
+     *      informational notices (no blocking — single-event flow handles that).
+     *   4. The existing classify() → requiresApproval() path runs unchanged.
      */
     async function processLine(line, stream) {
-      const cmd = extractCommand(line);
+      // ── Rule-engine pipeline (correlation layer) ────────────────────────────
+      const event = decodeCommand(line);
+      const cmd = event ? event.command : null;
 
+      if (event) {
+        bus.push(event);
+        const fired = filterFired(evaluate(bus), suppression);
+        for (const rule of fired) {
+          console.error(
+            chalk.magenta(`\n[AgentGuard] ⚡ Correlation: ${rule.description} [${rule.level}]`)
+          );
+        }
+      }
+
+      // ── Single-event classify / approval flow (unchanged) ───────────────────
       if (cmd) {
         stats.commandsSeen++;
 

@@ -14,6 +14,10 @@ import chokidar from "chokidar";
 import path from "path";
 import chalk from "chalk";
 import { logIntercepted } from "./logger.js";
+import { decodeFileEvent } from "./decoder.js";
+import { bus } from "./event-bus.js";
+import { evaluate } from "./correlator.js";
+import { filterFired, suppression } from "./suppression.js";
 
 // ─── Sensitive file patterns ─────────────────────────────────────────────────
 
@@ -90,6 +94,21 @@ export function startFileWatcher({ cwd, agent, stashRef, stats }) {
 
   function handleChange(event, filePath) {
     const rel = path.relative(cwd, filePath);
+
+    // ── Rule-engine pipeline (correlation layer) ──────────────────────────────
+    // handleChange receives internal labels ("created"/"modified"/"deleted");
+    // decodeFileEvent expects the raw chokidar event names ("add"/"change"/"unlink").
+    const chokidarEvt =
+      event === "deleted" ? "unlink" : event === "created" ? "add" : "change";
+    bus.push(decodeFileEvent(chokidarEvt, rel));
+    const fired = filterFired(evaluate(bus), suppression);
+    for (const rule of fired) {
+      console.error(
+        chalk.magenta(`[AgentGuard] ⚡ Correlation: ${rule.description} [${rule.level}]`)
+      );
+    }
+
+    // ── Existing sensitive-file detection (unchanged) ─────────────────────────
     const sensitive = isSensitive(rel);
     const level = sensitive ? riskLevel(rel) : "SAFE";
 
