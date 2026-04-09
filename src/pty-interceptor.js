@@ -20,11 +20,7 @@
  */
 
 import { classify, requiresApproval, scoreWithContext } from "./classifier.js";
-import { promptApproval } from "./approval.js";
 import {
-  logIntercepted,
-  logApproved,
-  logDenied,
   logSessionEnd,
   sessionId,
 } from "./logger.js";
@@ -182,14 +178,11 @@ export async function runPtyInterceptor({
       disableForwarding();
     }
 
-    // ── deny handler ──────────────────────────────────────────────────────
-    async function handleDeny({ cmd, level }) {
-      stats.blocked[level] = (stats.blocked[level] || 0) + 1;
-      logDenied({ command: cmd, level, agent });
-
-      console.error(chalk.red("\n[AgentGuard] Operation blocked."));
-
-      if (stashRef && config?.snapshot?.restoreOnDeny !== false) {
+    // ── Shared PTY runtime ────────────────────────────────────────────────
+    // Both correlation and single-event paths use the same callbacks.
+    const ptyRuntime = {
+      canPrompt: process.stdin.isTTY !== false,
+      onRestore: () => {
         console.error(chalk.yellow("[AgentGuard] Restoring snapshot\u2026"));
         const snap = restoreSnapshot(stashRef);
         console.error(
@@ -197,15 +190,20 @@ export async function runPtyInterceptor({
             ? chalk.green(`[AgentGuard] ${snap.message}`)
             : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
         );
-      }
-
-      cleanup();
-      logSessionEnd(agent);
-      try {
-        pty.kill();
-      } catch {}
-      resolve(1);
-    }
+      },
+      onTerminate: () => {
+        console.error(chalk.red("\n[AgentGuard] Operation blocked."));
+        cleanup();
+        logSessionEnd(agent);
+        try { pty.kill(); } catch {}
+        resolve(1);
+      },
+      onResume: () => {
+        try { pty.resume(); } catch {}
+        enableForwarding();
+        handlingApproval = false;
+      },
+    };
 
     // ── PTY output handler ────────────────────────────────────────────────
     let lineBuf = "";
@@ -246,50 +244,17 @@ export async function runPtyInterceptor({
 
             const { outcome } = await handleIncident({
               incident,
-              config,
-              stashRef,
-              agent,
-              stats,
-              runtime: {
-                // PTY mode assumes an interactive terminal, but guard against
-                // pipe/CI contexts where stdin may not be a TTY.
-                canPrompt: process.stdin.isTTY !== false,
-                onRestore: () => {
-                  console.error(chalk.yellow("[AgentGuard] Restoring snapshot\u2026"));
-                  const snap = restoreSnapshot(stashRef);
-                  console.error(
-                    snap.restored
-                      ? chalk.green(`[AgentGuard] ${snap.message}`)
-                      : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
-                  );
-                },
-                onTerminate: () => {
-                  console.error(chalk.red("\n[AgentGuard] Operation blocked."));
-                  cleanup();
-                  logSessionEnd(agent);
-                  try { pty.kill(); } catch {}
-                  resolve(1);
-                },
-                onResume: () => {
-                  try { pty.resume(); } catch {}
-                  enableForwarding();
-                  handlingApproval = false;
-                },
-              },
+              config, stashRef, agent, stats,
+              runtime: ptyRuntime,
             });
 
-            if (outcome === "denied") {
-              // onTerminate has resolved the promise and killed the PTY.
-              // Stop processing remaining lines in this data chunk.
-              return;
-            }
+            if (outcome === "denied") return; // PTY killed, stop processing this chunk
             if (outcome === "deferred") {
-              // Non-CRITICAL with no interactive TTY — resume and continue.
               try { pty.resume(); } catch {}
               enableForwarding();
               handlingApproval = false;
             }
-            // outcome === "approved": onResume already handled resume + flag reset.
+            // approved: ptyRuntime.onResume already handled resume + flag reset
           }
         }
 
@@ -298,75 +263,42 @@ export async function runPtyInterceptor({
         if (!cmd) continue;
 
         stats.commandsSeen++;
-
         const result = classify(cmd);
 
-        // ── config: autoDeny ─────────────────────────────────────────────
-        if (config?.autoDeny?.includes(result.level)) {
-          await handleDeny({ cmd, level: result.level });
-          return; // PTY killed, stop processing
-        }
-
-        // ── config: autoApprove ──────────────────────────────────────────
-        if (
-          config?.autoApprove?.includes(result.level) &&
-          requiresApproval(result)
-        ) {
-          stats.approved++;
-          logApproved({ command: cmd, level: result.level, agent });
-          continue;
-        }
-
-        // ── interactive approval ─────────────────────────────────────────
         if (requiresApproval(result)) {
-          stats.intercepted++;
-          logIntercepted({
-            command: cmd,
-            level: result.level,
-            reason: result.reason,
-            agent,
-          });
-
-          // Context scoring (adds contextNotes to the result for the prompt)
-          const contextResult = scoreWithContext(cmd);
-          const enrichedResult = {
-            ...result,
-            contextNotes: contextResult.contextNotes,
-          };
-
-          // Fire Telegram alert in parallel — don't await so it doesn't block
-          // the interactive prompt.
+          // Telegram alert fires before pausing — don't await so prompt isn't blocked
           if (isNotifierConfigured(config)) {
             sendTelegramAlert(
-              {
-                command: cmd,
-                level: result.level,
-                reason: result.reason,
-                sessionId,
-                agent,
-              },
+              { command: cmd, level: result.level, reason: result.reason, sessionId, agent },
               config
             ).catch(() => {});
           }
 
+          const contextResult = scoreWithContext(cmd);
+
           handlingApproval = true;
-          disableForwarding(); // hand stdin to the approval prompt
-          try { pty.pause(); } catch {} // freeze PTY output while prompting
+          disableForwarding();
+          try { pty.pause(); } catch {}
 
-          const decision = await promptApproval(enrichedResult);
+          const { outcome } = await handleIncident({
+            incident: {
+              source: "command",
+              level: result.level,
+              reason: result.reason,
+              command: cmd,
+              contextNotes: contextResult.contextNotes,
+            },
+            config, stashRef, agent, stats,
+            runtime: ptyRuntime,
+          });
 
-          try { pty.resume(); } catch {} // unfreeze PTY output
-          enableForwarding(); // resume PTY input forwarding
-          handlingApproval = false;
-
-          if (decision === "approve") {
-            stats.approved++;
-            logApproved({ command: cmd, level: result.level, agent });
-          } else {
-            // deny or quit
-            await handleDeny({ cmd, level: result.level });
-            return;
+          if (outcome === "denied") return;
+          if (outcome === "deferred") {
+            try { pty.resume(); } catch {}
+            enableForwarding();
+            handlingApproval = false;
           }
+          // approved: ptyRuntime.onResume already handled resume + flag reset
         }
       }
     });

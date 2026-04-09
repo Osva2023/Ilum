@@ -25,13 +25,7 @@
 
 import { spawn } from "child_process";
 import { classify, requiresApproval } from "./classifier.js";
-import { promptApproval } from "./approval.js";
-import {
-  logIntercepted,
-  logApproved,
-  logDenied,
-  logSessionEnd,
-} from "./logger.js";
+import { logSessionEnd } from "./logger.js";
 import { restoreSnapshot } from "./snapshot.js";
 import chalk from "chalk";
 import { decodeCommand } from "./decoder.js";
@@ -74,17 +68,46 @@ export async function runInterceptor({ agent, agentArgs, stashRef, config, stats
 
     /**
      * Process a complete line from the agent's output stream.
-     * Returns a promise so the stream can be paused while prompting.
      *
      * Pipeline:
      *   1. decodeCommand() normalises the line into a canonical event (or null).
-     *   2. The event is pushed to the shared event bus.
-     *   3. Correlation rules are evaluated; any newly-fired rules surface as
-     *      informational notices (no blocking — single-event flow handles that).
-     *   4. The existing classify() → requiresApproval() path runs unchanged.
+     *   2. The event is pushed to the shared event bus; correlation rules fire.
+     *   3. Correlation incidents are routed through handleIncident().
+     *   4. Single-event classify() result is also routed through handleIncident()
+     *      for risky commands — autoDeny / autoApprove / prompt all handled there.
      */
     async function processLine(line, stream) {
-      // ── Rule-engine pipeline (correlation layer) ────────────────────────────
+      // ── Shared runtime factory ──────────────────────────────────────────────
+      // Both the correlation path and the single-event path use the same
+      // terminate/restore/resume callbacks — only onResume differs (command
+      // path also forwards the line to the output stream).
+      function makeRuntime(extraOnResume) {
+        return {
+          canPrompt: process.stdout.isTTY ?? false,
+          onRestore: () => {
+            console.error(chalk.yellow("[AgentGuard] Restoring snapshot\u2026"));
+            const snap = restoreSnapshot(stashRef);
+            console.error(
+              snap.restored
+                ? chalk.green(`[AgentGuard] ${snap.message}`)
+                : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
+            );
+          },
+          onTerminate: () => {
+            console.error(chalk.red("\n[AgentGuard] Operation blocked."));
+            logSessionEnd(agent);
+            child.kill("SIGTERM");
+            process.exit(1);
+          },
+          onResume: () => {
+            extraOnResume?.();
+            child.stdout.resume();
+            child.stderr.resume();
+          },
+        };
+      }
+
+      // ── Correlation layer ───────────────────────────────────────────────────
       const event = decodeCommand(line);
       const cmd = event ? event.command : null;
 
@@ -92,139 +115,55 @@ export async function runInterceptor({ agent, agentArgs, stashRef, config, stats
         bus.push(event);
         const fired = filterFired(evaluate(bus), suppression);
         for (const rule of fired) {
-          // Always print the correlation notice so the user can see which
-          // pattern fired, regardless of whether enforcement blocks or not.
           console.error(
             chalk.magenta(`\n[AgentGuard] ⚡ Correlation: ${rule.description} [${rule.level}]`)
           );
 
-          const incident = {
-            source: "correlation",
-            level: rule.level,
-            reason: rule.description,
-            ruleId: rule.id,
-          };
-
-          // Pause streams so the approval prompt (if shown) has a clean TTY.
           child.stdout.pause();
           child.stderr.pause();
 
           const { outcome } = await handleIncident({
-            incident,
-            config,
-            stashRef,
-            agent,
-            stats,
-            runtime: {
-              canPrompt: process.stdout.isTTY ?? false,
-              onRestore: () => {
-                console.error(chalk.yellow("[AgentGuard] Restoring snapshot\u2026"));
-                const snap = restoreSnapshot(stashRef);
-                console.error(
-                  snap.restored
-                    ? chalk.green(`[AgentGuard] ${snap.message}`)
-                    : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
-                );
-              },
-              onTerminate: () => {
-                console.error(chalk.red("\n[AgentGuard] Operation blocked."));
-                logSessionEnd(agent);
-                child.kill("SIGTERM");
-                process.exit(1);
-              },
-              onResume: () => {
-                child.stdout.resume();
-                child.stderr.resume();
-              },
-            },
+            incident: { source: "correlation", level: rule.level, reason: rule.description, ruleId: rule.id },
+            config, stashRef, agent, stats,
+            runtime: makeRuntime(),
           });
 
           if (outcome === "deferred") {
-            // No TTY and non-CRITICAL — resume so the session can continue.
             child.stdout.resume();
             child.stderr.resume();
           }
-          // outcome === "approved": onResume already resumed streams.
-          // outcome === "denied":   onTerminate already killed the process.
+          // approved: onResume already resumed.  denied: process already exited.
         }
       }
 
-      // ── Single-event classify / approval flow (unchanged) ───────────────────
+      // ── Single-event classify / approval flow ───────────────────────────────
       if (cmd) {
         stats.commandsSeen++;
-
         const result = classify(cmd);
 
-        // ── config: autoDeny ───────────────────────────────────────────────
-        if (config?.autoDeny?.includes(result.level)) {
-          stats.blocked[result.level] = (stats.blocked[result.level] || 0) + 1;
-          logDenied({ command: cmd, level: result.level, agent });
-          console.error(
-            chalk.red(`\n[AgentGuard] Auto-denied (${result.level}): ${cmd}`)
-          );
-          doBlock({ cmd, level: result.level });
-          return;
-        }
-
-        // ── config: autoApprove ────────────────────────────────────────────
-        if (
-          config?.autoApprove?.includes(result.level) &&
-          requiresApproval(result)
-        ) {
-          stats.approved++;
-          logApproved({ command: cmd, level: result.level, agent });
-          stream.write(line + "\n");
-          return;
-        }
-
         if (requiresApproval(result)) {
-          stats.intercepted++;
-          logIntercepted({ command: cmd, level: result.level, reason: result.reason, agent });
-
-          // Pause data events while we wait for the user
           child.stdout.pause();
           child.stderr.pause();
 
-          const decision = await promptApproval(result);
+          const { outcome } = await handleIncident({
+            incident: { source: "command", level: result.level, reason: result.reason, command: cmd },
+            config, stashRef, agent, stats,
+            runtime: makeRuntime(() => { stream.write(line + "\n"); }),
+          });
 
-          if (decision === "approve") {
-            stats.approved++;
-            logApproved({ command: cmd, level: result.level, agent });
-            // Forward the line and resume
+          if (outcome === "denied") return;
+          if (outcome === "deferred") {
+            // Non-CRITICAL, no TTY — forward the line and resume.
             stream.write(line + "\n");
             child.stdout.resume();
             child.stderr.resume();
-          } else {
-            // deny or quit
-            stats.blocked[result.level] = (stats.blocked[result.level] || 0) + 1;
-            logDenied({ command: cmd, level: result.level, agent });
-            doBlock({ cmd, level: result.level });
           }
-          return;
+          return; // approved: onResume already forwarded + resumed
         }
       }
 
       // SAFE or non-command line — pass through immediately
       stream.write(line + "\n");
-    }
-
-    function doBlock({ cmd, level }) {
-      void cmd; // used by callers for logging before calling here
-      console.error(chalk.red("\n[AgentGuard] Operation blocked."));
-
-      if (stashRef && config?.snapshot?.restoreOnDeny !== false) {
-        console.error(chalk.yellow("[AgentGuard] Restoring snapshot\u2026"));
-        const snap = restoreSnapshot(stashRef);
-        console.error(
-          snap.restored
-            ? chalk.green(`[AgentGuard] ${snap.message}`)
-            : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
-        );
-      }
-
-      logSessionEnd(agent);
-      child.kill("SIGTERM");
-      process.exit(1);
     }
 
     // ── stdout handler ─────────────────────────────────────────────────────

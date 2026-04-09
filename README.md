@@ -209,6 +209,7 @@ Create `agentguard.config.json` in your project directory, or `~/.agentguard/con
 
 ```json
 {
+  "policy": "dev",
   "autoApprove": ["WARN"],
   "autoDeny": ["CRITICAL"],
   "rules": {
@@ -241,6 +242,7 @@ Create `agentguard.config.json` in your project directory, or `~/.agentguard/con
 
 | Field | Default | Description |
 |---|---|---|
+| `policy` | — | Named policy pack: `dev`, `strict`, or `ci` (see below) |
 | `autoApprove` | `[]` | Risk levels to approve without prompting |
 | `autoDeny` | `["CRITICAL"]` | Risk levels to deny without prompting |
 | `rules.disabled` | `[]` | Built-in rule IDs to skip |
@@ -248,6 +250,18 @@ Create `agentguard.config.json` in your project directory, or `~/.agentguard/con
 | `snapshot.enabled` | `true` | Create a git stash at session start |
 | `snapshot.restoreOnDeny` | `true` | Restore snapshot when an incident is denied |
 | `notifications.telegram` | disabled | Send Telegram alerts on `CRITICAL` incidents |
+
+### Policy packs
+
+Set `"policy"` to apply a behavior preset. Any other fields you set override the pack.
+
+| Pack | `autoApprove` | `autoDeny` | Use case |
+|---|---|---|---|
+| `dev` | `["WARN"]` | `["CRITICAL"]` | Local development — WARN approved silently, HIGH prompts, CRITICAL blocked |
+| `strict` | `[]` | `["CRITICAL", "HIGH"]` | Security-sensitive work — only WARN prompts, everything risky blocked |
+| `ci` | `[]` | `["CRITICAL", "HIGH", "WARN"]` | CI pipelines — all risky commands fail the build immediately |
+
+Precedence: **defaults → pack → your config**. Your explicit settings always win.
 
 ---
 

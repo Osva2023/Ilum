@@ -8,16 +8,22 @@
  * touches are logged to the audit log and noted with a quiet gray notice.
  * The mid-session approval prompt has been replaced by a Post-Action Review
  * (see reviewer.js) that runs after the agent exits.
+ *
+ * Correlation incidents (multi-event patterns across the shared event bus) are
+ * routed through handleIncident() so filewatcher-triggered correlations are
+ * enforced the same way as interceptor.js and pty-interceptor.js.
  */
 
 import chokidar from "chokidar";
 import path from "path";
 import chalk from "chalk";
-import { logIntercepted } from "./logger.js";
+import { logIntercepted, logSessionEnd } from "./logger.js";
 import { decodeFileEvent } from "./decoder.js";
 import { bus } from "./event-bus.js";
 import { evaluate } from "./correlator.js";
 import { filterFired, suppression } from "./suppression.js";
+import { handleIncident } from "./enforcement.js";
+import { restoreSnapshot } from "./snapshot.js";
 
 // ─── Sensitive file patterns ─────────────────────────────────────────────────
 
@@ -64,20 +70,24 @@ function riskLevel(filePath) {
  * Start watching the working directory for file changes.
  *
  * Changes are tracked silently.  Sensitive file touches emit a quiet notice
- * and are logged to the audit log.  No mid-session prompting occurs — the
- * Post-Action Review (reviewer.js) handles per-file decisions after the
- * agent exits.
+ * and are logged to the audit log.
+ *
+ * Correlation incidents (multi-event patterns detected via the shared event
+ * bus) are routed through handleIncident() exactly as interceptor.js does.
+ * CRITICAL correlations auto-deny and terminate the session; HIGH prompts
+ * interactively when a TTY is available; WARN is deferred when no TTY.
  *
  * @param {Object} opts
  * @param {string}   opts.cwd        - Directory to watch
  * @param {string}   opts.agent      - Agent name (for logging)
- * @param {string}   [opts.stashRef] - Snapshot ref (unused by watcher; passed through for context)
+ * @param {string}   [opts.stashRef] - Snapshot ref for restore-on-deny
+ * @param {Object}   [opts.config]   - Merged AgentGuard config object
  * @param {Object}   [opts.stats]    - Shared stats object (mutated in place)
  * @returns {{ stop: Function, fileChanges: Array }}
  */
-export function startFileWatcher({ cwd, agent, stashRef, stats }) {
-  void stashRef; // no longer used mid-session; reviewer.js handles rollback
+export function startFileWatcher({ cwd, agent, stashRef, config, stats }) {
   const fileChanges = [];
+  let handlingCorrelation = false; // prevent re-entrant enforcement
 
   const watcher = chokidar.watch(cwd, {
     ignored: [
@@ -92,7 +102,7 @@ export function startFileWatcher({ cwd, agent, stashRef, stats }) {
     awaitWriteFinish: false,    // report immediately, don't wait
   });
 
-  function handleChange(event, filePath) {
+  async function handleChange(event, filePath) {
     const rel = path.relative(cwd, filePath);
 
     // ── Rule-engine pipeline (correlation layer) ──────────────────────────────
@@ -102,10 +112,59 @@ export function startFileWatcher({ cwd, agent, stashRef, stats }) {
       event === "deleted" ? "unlink" : event === "created" ? "add" : "change";
     bus.push(decodeFileEvent(chokidarEvt, rel));
     const fired = filterFired(evaluate(bus), suppression);
+
     for (const rule of fired) {
+      if (handlingCorrelation) continue; // prevent re-entrant enforcement
+
       console.error(
         chalk.magenta(`[AgentGuard] ⚡ Correlation: ${rule.description} [${rule.level}]`)
       );
+
+      const incident = {
+        source: "correlation",
+        level: rule.level,
+        reason: rule.description,
+        ruleId: rule.id,
+      };
+
+      handlingCorrelation = true;
+
+      const { outcome } = await handleIncident({
+        incident,
+        config,
+        stashRef,
+        agent,
+        stats,
+        runtime: {
+          // Filewatch runs alongside the interceptor — no PTY, no child ref.
+          // Use process.stdout.isTTY as the canPrompt signal, same as interceptor.js.
+          canPrompt: process.stdout.isTTY ?? false,
+          onRestore: () => {
+            console.error(chalk.yellow("[AgentGuard] Restoring snapshot\u2026"));
+            const snap = restoreSnapshot(stashRef);
+            console.error(
+              snap.restored
+                ? chalk.green(`[AgentGuard] ${snap.message}`)
+                : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
+            );
+          },
+          onTerminate: () => {
+            console.error(chalk.red("\n[AgentGuard] Operation blocked."));
+            logSessionEnd(agent);
+            process.exit(1);
+          },
+          onResume: () => {
+            handlingCorrelation = false;
+          },
+        },
+      });
+
+      if (outcome === "deferred") {
+        // Non-CRITICAL with no interactive TTY — allow the session to continue.
+        handlingCorrelation = false;
+      }
+      // outcome === "approved": onResume already reset the flag.
+      // outcome === "denied":   onTerminate called process.exit(1).
     }
 
     // ── Existing sensitive-file detection (unchanged) ─────────────────────────
@@ -131,9 +190,9 @@ export function startFileWatcher({ cwd, agent, stashRef, stats }) {
   }
 
   watcher
-    .on("add",    (p) => handleChange("created", p))
-    .on("change", (p) => handleChange("modified", p))
-    .on("unlink", (p) => handleChange("deleted", p));
+    .on("add",    (p) => { handleChange("created", p).catch(() => {}); })
+    .on("change", (p) => { handleChange("modified", p).catch(() => {}); })
+    .on("unlink", (p) => { handleChange("deleted", p).catch(() => {}); });
 
   return {
     stop: () => watcher.close(),

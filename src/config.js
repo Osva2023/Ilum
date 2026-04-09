@@ -6,7 +6,8 @@
  *
  * Config schema:
  * {
- *   "autoApprove": ["WARN"],          // auto-approve these risk levels
+ *   "policy":      "dev",              // optional named policy pack (dev | strict | ci)
+ *   "autoApprove": ["WARN"],           // auto-approve these risk levels
  *   "autoDeny":    ["CRITICAL"],       // auto-deny these risk levels
  *   "rules": {
  *     "disabled": ["npm-install"],     // rule IDs to skip
@@ -17,15 +18,50 @@
  *   "snapshot": { "enabled": true, "restoreOnDeny": true },
  *   "auditLog":  { "enabled": true, "path": "~/.agentguard/audit.log" }
  * }
+ *
+ * Merge precedence (lowest → highest):
+ *   DEFAULT_CONFIG  →  policy pack (if set)  →  project/user config file
  */
 
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
+// ─── policy packs ────────────────────────────────────────────────────────────
+
+/**
+ * Named policy packs.  Each pack overrides only the fields it cares about;
+ * anything not mentioned falls back to DEFAULT_CONFIG.  Project-level config
+ * always wins over the pack.
+ *
+ * dev    — local development: WARN auto-approved, CRITICAL blocked, prompt for HIGH
+ * strict — security-conscious: nothing auto-approved, HIGH + CRITICAL both blocked
+ * ci     — non-interactive: all risk levels auto-denied so risky commands fail the build
+ */
+export const POLICY_PACKS = {
+  dev: {
+    autoApprove: ["WARN"],
+    autoDeny:    ["CRITICAL"],
+  },
+  strict: {
+    autoApprove: [],
+    autoDeny:    ["CRITICAL", "HIGH"],
+  },
+  ci: {
+    autoApprove: [],
+    autoDeny:    ["CRITICAL", "HIGH", "WARN"],
+  },
+};
+
 // ─── defaults ────────────────────────────────────────────────────────────────
 
 export const DEFAULT_CONFIG = {
+  /**
+   * When true, AgentGuard detects and logs incidents but never blocks, prompts,
+   * restores, or terminates.  Useful for observing behavior before enabling
+   * full enforcement.
+   */
+  auditOnly: false,
   /** Risk levels to approve without prompting. e.g. ["WARN"] */
   autoApprove: [],
   /** Risk levels to deny without prompting. Override to [] to prompt instead. */
@@ -59,6 +95,11 @@ export const DEFAULT_CONFIG = {
 
 /**
  * Load config with priority: local file > global file > defaults.
+ * If the config specifies a `policy` pack, it is applied between the built-in
+ * defaults and any explicit project/user overrides.
+ *
+ * Precedence (lowest → highest):
+ *   DEFAULT_CONFIG  →  policy pack  →  project/user config file
  *
  * @param {string} [cwd]  Directory to search for a local config file.
  * @returns {object}      Fully-merged config object.
@@ -75,7 +116,16 @@ export function loadConfig(cwd = process.cwd()) {
     raw = parseJsonFile(globalPath, "global");
   }
 
-  return mergeConfig(DEFAULT_CONFIG, raw);
+  // Apply policy pack (if any) between defaults and user overrides.
+  const pack = raw.policy ? POLICY_PACKS[raw.policy] : null;
+  if (raw.policy && !pack) {
+    process.stderr.write(
+      `[AgentGuard] Warning: unknown policy pack "${raw.policy}" — ignored. Valid packs: ${Object.keys(POLICY_PACKS).join(", ")}\n`
+    );
+  }
+
+  const base = pack ? mergeConfig(DEFAULT_CONFIG, pack) : DEFAULT_CONFIG;
+  return mergeConfig(base, raw);
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -97,6 +147,7 @@ function parseJsonFile(filePath, label) {
  */
 export function mergeConfig(defaults, overrides) {
   return {
+    auditOnly: overrides.auditOnly ?? defaults.auditOnly,
     autoApprove: overrides.autoApprove ?? [...defaults.autoApprove],
     autoDeny: overrides.autoDeny ?? [...defaults.autoDeny],
     rules: {

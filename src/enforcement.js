@@ -110,6 +110,18 @@ export async function handleIncident({
   // Resolve the prompt function: use injected stub in tests, real UI in prod.
   const doPrompt = runtime.prompt ?? promptApproval;
 
+  // ── 0. audit-only mode ───────────────────────────────────────────────────────
+  //
+  // When audit-only is active the incident is logged but no enforcement action
+  // is taken: no prompt, no block, no restore, no terminate.  The session
+  // continues as if the incident never happened.
+  if (config?.auditOnly) {
+    if (stats) stats.intercepted = (stats.intercepted ?? 0) + 1;
+    logDetected(incident, agent);
+    runtime.onResume?.();
+    return { outcome: "approved", incident };
+  }
+
   // ── Shared deny sequence ─────────────────────────────────────────────────────
   //
   // Every deny path — autoDeny, CRITICAL-no-TTY, and prompt deny — runs the

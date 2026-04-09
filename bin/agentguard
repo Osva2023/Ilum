@@ -28,19 +28,24 @@ import { showPostActionReview } from "../src/reviewer.js";
 
 // ─── parse args ───────────────────────────────────────────────────────────────
 
-const [, , agent, ...agentArgs] = process.argv;
+// Extract agentguard-specific flags before splitting into agent / agentArgs.
+const rawArgs = process.argv.slice(2);
+const auditOnlyFlag = rawArgs.includes("--audit-only");
+const filteredArgs = rawArgs.filter((a) => a !== "--audit-only");
+const [agent, ...agentArgs] = filteredArgs;
 
 if (!agent || agent === "--help" || agent === "-h") {
   console.log(`
 ${chalk.bold.cyan("AgentGuard")} ${chalk.gray("v0.2.0")} — Universal AI agent shell wrapper
 
 ${chalk.bold("Usage:")}
-  agentguard <agent> [agent-args...]
+  agentguard [--audit-only] <agent> [agent-args...]
 
 ${chalk.bold("Examples:")}
   agentguard codex
   agentguard claude --print "refactor my auth module"
   agentguard aider --model gpt-4
+  agentguard --audit-only claude --print "clean up this project"
 
 ${chalk.bold("What it does:")}
   • Creates a git snapshot of your working tree before the session starts
@@ -69,6 +74,9 @@ if (agent === "dashboard") {
 
 const config = loadConfig();
 
+// --audit-only flag overrides config file setting.
+if (auditOnlyFlag) config.auditOnly = true;
+
 // ─── banner ───────────────────────────────────────────────────────────────────
 
 console.error(
@@ -76,6 +84,9 @@ console.error(
     chalk.white(` Wrapping agent: ${chalk.yellow(agent)}`) +
     (agentArgs.length ? chalk.gray(` ${agentArgs.join(" ")}`) : "")
 );
+if (config.auditOnly) {
+  console.error(chalk.yellow.bold("  [AgentGuard] AUDIT-ONLY MODE — incidents logged, no enforcement"));
+}
 console.error(chalk.gray(`  Audit log: ${LOG_FILE}`));
 
 // ─── session start ────────────────────────────────────────────────────────────
@@ -164,6 +175,7 @@ const watcher = startFileWatcher({
   cwd: process.cwd(),
   agent,
   stashRef: snap.stashRef,
+  config,
   stats,
 });
 
@@ -187,12 +199,12 @@ try {
     cwd: process.cwd(),
   });
 
-  printSessionSummary({ agent, startTime, stats, snapshot: snap, reviewStats });
+  printSessionSummary({ agent, startTime, stats, snapshot: snap, reviewStats, auditOnly: config.auditOnly });
 
   process.exit(exitCode);
 } catch (err) {
   watcher.stop();
   console.error(chalk.red(`[AgentGuard] Fatal error: ${err.message}`));
-  printSessionSummary({ agent, startTime, stats, snapshot: snap });
+  printSessionSummary({ agent, startTime, stats, snapshot: snap, auditOnly: config.auditOnly });
   process.exit(1);
 }

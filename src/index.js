@@ -12,7 +12,7 @@ export { buildIncidentPreview } from "./preview.js";
 export { createSnapshot, restoreSnapshot } from "./snapshot.js";
 export { runInterceptor } from "./interceptor.js";
 export { runPtyInterceptor, PTY_AVAILABLE } from "./pty-interceptor.js";
-export { loadConfig, mergeConfig, DEFAULT_CONFIG } from "./config.js";
+export { loadConfig, mergeConfig, DEFAULT_CONFIG, POLICY_PACKS } from "./config.js";
 export { printSessionSummary } from "./summary.js";
 export { showPostActionReview } from "./reviewer.js";
 export {

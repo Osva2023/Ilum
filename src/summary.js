@@ -56,7 +56,7 @@ function formatDuration(ms) {
 /**
  * Print the end-of-session summary box to stderr.
  *
- * @param {Object} opts
+ * @param {Object}  opts
  * @param {string}  opts.agent                  - Agent name
  * @param {number}  opts.startTime              - Session start timestamp (Date.now())
  * @param {Object}  opts.stats                  - { commandsSeen, intercepted, approved, blocked }
@@ -64,8 +64,9 @@ function formatDuration(ms) {
  * @param {Object}  [opts.reviewStats]          - { kept, rolledBack } from showPostActionReview()
  * @param {number}  opts.reviewStats.kept       - Files kept after review
  * @param {number}  opts.reviewStats.rolledBack - Files rolled back after review
+ * @param {boolean} [opts.auditOnly]            - True when session ran in audit-only mode
  */
-export function printSessionSummary({ agent, startTime, stats, snapshot, reviewStats }) {
+export function printSessionSummary({ agent, startTime, stats, snapshot, reviewStats, auditOnly }) {
   const duration = formatDuration(Date.now() - startTime);
 
   const blockedTotal = Object.values(stats.blocked || {}).reduce((a, b) => a + b, 0);
@@ -82,32 +83,46 @@ export function printSessionSummary({ agent, startTime, stats, snapshot, reviewS
   console.error(""); // blank line before box
   console.error(boxTop());
   console.error(boxRow(chalk.cyan.bold("  AgentGuard \u2014 Session Summary")));
+  if (auditOnly) {
+    console.error(boxRow(chalk.yellow.bold("  \u26a0  AUDIT-ONLY MODE \u2014 no enforcement")));
+  }
   console.error(boxDivider());
   console.error(boxRow(`  Agent:      ${chalk.yellow(agent)}`));
   console.error(boxRow(`  Duration:   ${chalk.white(duration)}`));
   console.error(boxDivider());
-  console.error(
-    boxRow(
-      `  Commands:   ${chalk.white(stats.commandsSeen)} seen, ` +
-        `${chalk.yellow(stats.intercepted)} intercepted`
-    )
-  );
+  if (auditOnly) {
+    console.error(
+      boxRow(
+        `  Commands:   ${chalk.white(stats.commandsSeen)} seen, ` +
+          `${chalk.yellow(stats.intercepted)} observed`
+      )
+    );
+  } else {
+    console.error(
+      boxRow(
+        `  Commands:   ${chalk.white(stats.commandsSeen)} seen, ` +
+          `${chalk.yellow(stats.intercepted)} intercepted`
+      )
+    );
+  }
   if (stats.fileChanges > 0) {
     console.error(
       boxRow(`  File edits: ${chalk.white(stats.fileChanges)} detected by watcher`)
     );
   }
-  console.error(
-    boxRow(
-      `  Blocked:    ${blockedTotal > 0 ? chalk.red(blockedTotal) : chalk.gray("0")}` +
-        (blockedTotal > 0 ? chalk.gray(` (${blockedDetail})`) : "")
-    )
-  );
-  console.error(
-    boxRow(
-      `  Approved:   ${stats.approved > 0 ? chalk.green(stats.approved) : chalk.gray("0")}`
-    )
-  );
+  if (!auditOnly) {
+    console.error(
+      boxRow(
+        `  Blocked:    ${blockedTotal > 0 ? chalk.red(blockedTotal) : chalk.gray("0")}` +
+          (blockedTotal > 0 ? chalk.gray(` (${blockedDetail})`) : "")
+      )
+    );
+    console.error(
+      boxRow(
+        `  Approved:   ${stats.approved > 0 ? chalk.green(stats.approved) : chalk.gray("0")}`
+      )
+    );
+  }
   console.error(boxDivider());
   console.error(boxRow(`  Snapshot:   ${snapStatus}`));
   if (reviewStats) {
