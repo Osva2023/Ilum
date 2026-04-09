@@ -28,8 +28,8 @@ import { homedir } from "os";
 export const DEFAULT_CONFIG = {
   /** Risk levels to approve without prompting. e.g. ["WARN"] */
   autoApprove: [],
-  /** Risk levels to deny without prompting. e.g. ["CRITICAL"] */
-  autoDeny: [],
+  /** Risk levels to deny without prompting. Override to [] to prompt instead. */
+  autoDeny: ["CRITICAL"],
   rules: {
     /** Rule IDs to disable. */
     disabled: [],

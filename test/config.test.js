@@ -25,7 +25,7 @@ console.log("loadConfig():");
 test("returns defaults when no config file exists", () => {
   const cfg = loadConfig("/nonexistent/dir/that/does/not/exist");
   assert.deepStrictEqual(cfg.autoApprove, []);
-  assert.deepStrictEqual(cfg.autoDeny, []);
+  assert.deepStrictEqual(cfg.autoDeny, ["CRITICAL"]);
   assert.strictEqual(cfg.snapshot.enabled, true);
 });
 

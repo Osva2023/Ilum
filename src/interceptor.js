@@ -38,6 +38,7 @@ import { decodeCommand } from "./decoder.js";
 import { bus } from "./event-bus.js";
 import { evaluate } from "./correlator.js";
 import { filterFired, suppression } from "./suppression.js";
+import { handleIncident } from "./enforcement.js";
 
 // ─── core ────────────────────────────────────────────────────────────────────
 
@@ -91,9 +92,60 @@ export async function runInterceptor({ agent, agentArgs, stashRef, config, stats
         bus.push(event);
         const fired = filterFired(evaluate(bus), suppression);
         for (const rule of fired) {
+          // Always print the correlation notice so the user can see which
+          // pattern fired, regardless of whether enforcement blocks or not.
           console.error(
             chalk.magenta(`\n[AgentGuard] ⚡ Correlation: ${rule.description} [${rule.level}]`)
           );
+
+          const incident = {
+            source: "correlation",
+            level: rule.level,
+            reason: rule.description,
+            ruleId: rule.id,
+          };
+
+          // Pause streams so the approval prompt (if shown) has a clean TTY.
+          child.stdout.pause();
+          child.stderr.pause();
+
+          const { outcome } = await handleIncident({
+            incident,
+            config,
+            stashRef,
+            agent,
+            stats,
+            runtime: {
+              canPrompt: process.stdout.isTTY ?? false,
+              onRestore: () => {
+                console.error(chalk.yellow("[AgentGuard] Restoring snapshot\u2026"));
+                const snap = restoreSnapshot(stashRef);
+                console.error(
+                  snap.restored
+                    ? chalk.green(`[AgentGuard] ${snap.message}`)
+                    : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
+                );
+              },
+              onTerminate: () => {
+                console.error(chalk.red("\n[AgentGuard] Operation blocked."));
+                logSessionEnd(agent);
+                child.kill("SIGTERM");
+                process.exit(1);
+              },
+              onResume: () => {
+                child.stdout.resume();
+                child.stderr.resume();
+              },
+            },
+          });
+
+          if (outcome === "deferred") {
+            // No TTY and non-CRITICAL — resume so the session can continue.
+            child.stdout.resume();
+            child.stderr.resume();
+          }
+          // outcome === "approved": onResume already resumed streams.
+          // outcome === "denied":   onTerminate already killed the process.
         }
       }
 

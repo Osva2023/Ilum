@@ -17,10 +17,11 @@
 
 import { promptApproval } from "./approval.js";
 import {
-  logIntercepted,
-  logApproved,
-  logDenied,
+  logDetected,
+  logIncidentApproved,
+  logIncidentDenied,
 } from "./logger.js";
+import { buildIncidentPreview } from "./preview.js";
 
 // ─── Types (JSDoc only) ───────────────────────────────────────────────────────
 
@@ -109,20 +110,40 @@ export async function handleIncident({
   // Resolve the prompt function: use injected stub in tests, real UI in prod.
   const doPrompt = runtime.prompt ?? promptApproval;
 
+  // ── Shared deny sequence ─────────────────────────────────────────────────────
+  //
+  // Every deny path — autoDeny, CRITICAL-no-TTY, and prompt deny — runs the
+  // same sequence in the same order:
+  //   1. Increment blocked stats
+  //   2. Emit incident_denied log entry
+  //   3. Call onRestore (if stashRef is set and restoreOnDeny is not false)
+  //   4. Call onTerminate
+  //
+  // Restoring the snapshot on every deny is intentional: the stash captures
+  // the workspace at session start, and denying a dangerous operation means
+  // we want to roll back to that known-good state regardless of how the deny
+  // was triggered.
+  function executeDeny() {
+    if (stats) stats.blocked = { ...stats.blocked, [level]: (stats.blocked?.[level] ?? 0) + 1 };
+    logIncidentDenied(incident, agent);
+    if (stashRef && config?.snapshot?.restoreOnDeny !== false) {
+      runtime.onRestore?.();
+    }
+    runtime.onTerminate();
+    return { outcome: "denied", incident };
+  }
+
   // ── 1. autoDeny ─────────────────────────────────────────────────────────────
 
   if (config?.autoDeny?.includes(level)) {
-    if (stats) stats.blocked = { ...stats.blocked, [level]: (stats.blocked?.[level] ?? 0) + 1 };
-    logDenied({ command: displayCommand, level, agent });
-    runtime.onTerminate();
-    return { outcome: "denied", incident };
+    return executeDeny();
   }
 
   // ── 2. autoApprove ──────────────────────────────────────────────────────────
 
   if (config?.autoApprove?.includes(level)) {
     if (stats) stats.approved = (stats.approved ?? 0) + 1;
-    logApproved({ command: displayCommand, level, agent });
+    logIncidentApproved(incident, agent);
     runtime.onResume?.();
     return { outcome: "approved", incident };
   }
@@ -130,33 +151,41 @@ export async function handleIncident({
   // ── 3. deferred (no TTY) ────────────────────────────────────────────────────
 
   if (!runtime.canPrompt) {
+    // CRITICAL incidents must never be left unresolved.  Even without an
+    // interactive TTY we auto-deny them — a session that cannot prompt a
+    // human on a CRITICAL event is not safe to continue.
+    // WARN / HIGH are deferred (caller decides what to do with the result).
+    if (level === "CRITICAL") {
+      return executeDeny();
+    }
     // Log that we saw it but could not act interactively.
-    logIntercepted({ command: displayCommand, level, reason, agent });
+    logDetected(incident, agent);
     return { outcome: "deferred", incident };
   }
 
   // ── 4. interactive prompt ───────────────────────────────────────────────────
 
   if (stats) stats.intercepted = (stats.intercepted ?? 0) + 1;
-  logIntercepted({ command: displayCommand, level, reason, agent });
+  logDetected(incident, agent);
 
-  const decision = await doPrompt({ command: displayCommand, level, reason, contextNotes });
+  // Build source-specific preview lines and prepend them to any existing
+  // contextNotes so the operator sees relevant context before deciding.
+  // For command incidents this returns [] (buildDiffPreview handles them).
+  const preview = buildIncidentPreview(incident);
+  const promptContextNotes = [
+    ...preview,
+    ...(Array.isArray(contextNotes) ? contextNotes : []),
+  ];
+
+  const decision = await doPrompt({ command: displayCommand, level, reason, contextNotes: promptContextNotes });
 
   if (decision === "approve") {
     if (stats) stats.approved = (stats.approved ?? 0) + 1;
-    logApproved({ command: displayCommand, level, agent });
+    logIncidentApproved(incident, agent);
     runtime.onResume?.();
     return { outcome: "approved", incident };
   }
 
   // deny or quit
-  if (stats) stats.blocked = { ...stats.blocked, [level]: (stats.blocked?.[level] ?? 0) + 1 };
-  logDenied({ command: displayCommand, level, agent });
-
-  if (stashRef && config?.snapshot?.restoreOnDeny !== false) {
-    runtime.onRestore?.();
-  }
-
-  runtime.onTerminate();
-  return { outcome: "denied", incident };
+  return executeDeny();
 }

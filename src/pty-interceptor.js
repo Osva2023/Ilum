@@ -32,6 +32,11 @@ import { restoreSnapshot } from "./snapshot.js";
 import { isNotifierConfigured, sendTelegramAlert } from "./notifier.js";
 import chalk from "chalk";
 import { execSync } from "child_process";
+import { decodeCommand } from "./decoder.js";
+import { bus } from "./event-bus.js";
+import { evaluate } from "./correlator.js";
+import { filterFired, suppression } from "./suppression.js";
+import { handleIncident } from "./enforcement.js";
 
 /** Resolve a binary name to its full path using `which`. */
 function resolveBin(name) {
@@ -217,6 +222,78 @@ export async function runPtyInterceptor({
       lineBuf = lines.pop(); // keep incomplete trailing fragment
 
       for (const line of lines) {
+        // ── Correlation layer ──────────────────────────────────────────────────
+        // Strip ANSI escape codes before decoding — PTY output contains them raw.
+        const event = decodeCommand(line.replace(ANSI_RE, "").trim());
+        if (event) {
+          bus.push(event);
+          const fired = filterFired(evaluate(bus), suppression);
+          for (const rule of fired) {
+            console.error(
+              chalk.magenta(`\n[AgentGuard] ⚡ Correlation: ${rule.description} [${rule.level}]`)
+            );
+
+            const incident = {
+              source: "correlation",
+              level: rule.level,
+              reason: rule.description,
+              ruleId: rule.id,
+            };
+
+            handlingApproval = true;
+            disableForwarding();
+            try { pty.pause(); } catch {}
+
+            const { outcome } = await handleIncident({
+              incident,
+              config,
+              stashRef,
+              agent,
+              stats,
+              runtime: {
+                // PTY mode assumes an interactive terminal, but guard against
+                // pipe/CI contexts where stdin may not be a TTY.
+                canPrompt: process.stdin.isTTY !== false,
+                onRestore: () => {
+                  console.error(chalk.yellow("[AgentGuard] Restoring snapshot\u2026"));
+                  const snap = restoreSnapshot(stashRef);
+                  console.error(
+                    snap.restored
+                      ? chalk.green(`[AgentGuard] ${snap.message}`)
+                      : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
+                  );
+                },
+                onTerminate: () => {
+                  console.error(chalk.red("\n[AgentGuard] Operation blocked."));
+                  cleanup();
+                  logSessionEnd(agent);
+                  try { pty.kill(); } catch {}
+                  resolve(1);
+                },
+                onResume: () => {
+                  try { pty.resume(); } catch {}
+                  enableForwarding();
+                  handlingApproval = false;
+                },
+              },
+            });
+
+            if (outcome === "denied") {
+              // onTerminate has resolved the promise and killed the PTY.
+              // Stop processing remaining lines in this data chunk.
+              return;
+            }
+            if (outcome === "deferred") {
+              // Non-CRITICAL with no interactive TTY — resume and continue.
+              try { pty.resume(); } catch {}
+              enableForwarding();
+              handlingApproval = false;
+            }
+            // outcome === "approved": onResume already handled resume + flag reset.
+          }
+        }
+
+        // ── Single-event classify / approval flow ──────────────────────────────
         const cmd = extractCommand(line);
         if (!cmd) continue;
 

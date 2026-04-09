@@ -200,6 +200,65 @@ describe("handleIncident()", () => {
       });
       assert.equal(result.outcome, "denied");
     });
+
+    // ── autoDeny restore semantics ─────────────────────────────────────────────
+    // autoDeny now runs the same restore sequence as prompt-deny.
+
+    it("calls onRestore on autoDeny when stashRef is set", async () => {
+      let restored = false;
+      await handleIncident({
+        incident: makeIncident({ level: "CRITICAL" }),
+        config: makeConfig({ autoDeny: ["CRITICAL"] }),
+        stashRef: "stash@{0}",
+        runtime: makeRuntime({
+          onTerminate: () => {},
+          onRestore: () => { restored = true; },
+        }),
+      });
+      assert.equal(restored, true);
+    });
+
+    it("calls onRestore before onTerminate on autoDeny", async () => {
+      const order = [];
+      await handleIncident({
+        incident: makeIncident({ level: "CRITICAL" }),
+        config: makeConfig({ autoDeny: ["CRITICAL"] }),
+        stashRef: "stash@{0}",
+        runtime: makeRuntime({
+          onRestore: () => { order.push("restore"); },
+          onTerminate: () => { order.push("terminate"); },
+        }),
+      });
+      assert.deepEqual(order, ["restore", "terminate"]);
+    });
+
+    it("does not call onRestore on autoDeny when stashRef is absent", async () => {
+      let restored = false;
+      await handleIncident({
+        incident: makeIncident({ level: "CRITICAL" }),
+        config: makeConfig({ autoDeny: ["CRITICAL"] }),
+        stashRef: undefined,
+        runtime: makeRuntime({
+          onTerminate: () => {},
+          onRestore: () => { restored = true; },
+        }),
+      });
+      assert.equal(restored, false);
+    });
+
+    it("does not call onRestore on autoDeny when restoreOnDeny is false", async () => {
+      let restored = false;
+      await handleIncident({
+        incident: makeIncident({ level: "CRITICAL" }),
+        config: makeConfig({ autoDeny: ["CRITICAL"], snapshot: { enabled: true, restoreOnDeny: false } }),
+        stashRef: "stash@{0}",
+        runtime: makeRuntime({
+          onTerminate: () => {},
+          onRestore: () => { restored = true; },
+        }),
+      });
+      assert.equal(restored, false);
+    });
   });
 
   // ── prompt → approve ────────────────────────────────────────────────────────
@@ -481,6 +540,101 @@ describe("handleIncident()", () => {
     });
   });
 
+  // ── CRITICAL never deferred ──────────────────────────────────────────────────
+
+  describe("CRITICAL is never deferred — blocked even without a TTY", () => {
+    it("CRITICAL with canPrompt=false returns outcome=denied, not deferred", async () => {
+      const result = await handleIncident({
+        incident: makeIncident({ level: "CRITICAL" }),
+        config: makeConfig(),
+        runtime: makeRuntime({ canPrompt: false, onTerminate: () => {} }),
+      });
+      assert.equal(result.outcome, "denied");
+    });
+
+    it("WARN with canPrompt=false still returns outcome=deferred (unchanged)", async () => {
+      const result = await handleIncident({
+        incident: makeIncident({ level: "WARN" }),
+        config: makeConfig(),
+        runtime: makeRuntime({ canPrompt: false }),
+      });
+      assert.equal(result.outcome, "deferred");
+    });
+
+    it("HIGH with canPrompt=false still returns outcome=deferred (unchanged)", async () => {
+      const result = await handleIncident({
+        incident: makeIncident({ level: "HIGH" }),
+        config: makeConfig(),
+        runtime: makeRuntime({ canPrompt: false }),
+      });
+      assert.equal(result.outcome, "deferred");
+    });
+
+    it("CRITICAL no-TTY calls onTerminate", async () => {
+      let terminated = false;
+      await handleIncident({
+        incident: makeIncident({ level: "CRITICAL" }),
+        config: makeConfig(),
+        runtime: makeRuntime({ canPrompt: false, onTerminate: () => { terminated = true; } }),
+      });
+      assert.equal(terminated, true);
+    });
+
+    it("CRITICAL no-TTY does not call prompt", async () => {
+      let prompted = false;
+      await handleIncident({
+        incident: makeIncident({ level: "CRITICAL" }),
+        config: makeConfig(),
+        runtime: makeRuntime({
+          canPrompt: false,
+          onTerminate: () => {},
+          prompt: async () => { prompted = true; return "deny"; },
+        }),
+      });
+      assert.equal(prompted, false);
+    });
+
+    it("CRITICAL no-TTY calls onRestore when stashRef is set", async () => {
+      let restored = false;
+      await handleIncident({
+        incident: makeIncident({ level: "CRITICAL" }),
+        config: makeConfig({ snapshot: { enabled: true, restoreOnDeny: true } }),
+        stashRef: "stash@{0}",
+        runtime: makeRuntime({
+          canPrompt: false,
+          onRestore: () => { restored = true; },
+          onTerminate: () => {},
+        }),
+      });
+      assert.equal(restored, true);
+    });
+
+    it("CRITICAL no-TTY increments stats.blocked", async () => {
+      const stats = { approved: 0, intercepted: 0, blocked: {} };
+      await handleIncident({
+        incident: makeIncident({ level: "CRITICAL" }),
+        config: makeConfig(),
+        stats,
+        runtime: makeRuntime({ canPrompt: false, onTerminate: () => {} }),
+      });
+      assert.equal(stats.blocked["CRITICAL"], 1);
+    });
+
+    it("CRITICAL no-TTY from correlation source is also denied", async () => {
+      const result = await handleIncident({
+        incident: {
+          source: "correlation",
+          level: "CRITICAL",
+          reason: "Mass file deletion detected",
+          ruleId: "mass-delete",
+        },
+        config: makeConfig(),
+        runtime: makeRuntime({ canPrompt: false, onTerminate: () => {} }),
+      });
+      assert.equal(result.outcome, "denied");
+    });
+  });
+
   // ── incident sources ─────────────────────────────────────────────────────────
 
   describe("incident source variations", () => {
@@ -520,6 +674,112 @@ describe("handleIncident()", () => {
     });
   });
 
+  // ── preview integration ───────────────────────────────────────────────────────
+  // Verifies that handleIncident enriches contextNotes with source-specific
+  // preview before passing them to the prompt function.
+
+  describe("preview context enrichment at prompt time", () => {
+    it("correlation incident: prompt receives contextNotes containing source info", async () => {
+      let capturedNotes = null;
+      await handleIncident({
+        incident: {
+          source: "correlation",
+          level: "HIGH",
+          reason: "Secret file modified then network request",
+          ruleId: "env-plus-network",
+        },
+        config: makeConfig(),
+        runtime: makeRuntime({
+          prompt: async (arg) => { capturedNotes = arg.contextNotes; return "approve"; },
+        }),
+      });
+      assert.ok(Array.isArray(capturedNotes), "contextNotes should be an array");
+      assert.ok(capturedNotes.some((l) => l.includes("correlation")), "should mention correlation source");
+      assert.ok(capturedNotes.some((l) => l.includes("env-plus-network")), "should include ruleId");
+    });
+
+    it("filewatch incident: prompt receives contextNotes containing file info", async () => {
+      let capturedNotes = null;
+      await handleIncident({
+        incident: {
+          source: "filewatch",
+          level: "HIGH",
+          reason: "Sensitive file modified by agent",
+          command: "modified: .env",
+        },
+        config: makeConfig(),
+        runtime: makeRuntime({
+          prompt: async (arg) => { capturedNotes = arg.contextNotes; return "approve"; },
+        }),
+      });
+      assert.ok(Array.isArray(capturedNotes));
+      assert.ok(capturedNotes.some((l) => l.includes("filewatch")), "should mention filewatch source");
+      assert.ok(capturedNotes.some((l) => l.includes(".env")), "should include filename");
+    });
+
+    it("command incident: prompt receives empty preview (no double-fill)", async () => {
+      let capturedNotes = null;
+      await handleIncident({
+        incident: {
+          source: "command",
+          level: "HIGH",
+          reason: "Dangerous command",
+          command: "rm -rf /tmp",
+        },
+        config: makeConfig(),
+        runtime: makeRuntime({
+          prompt: async (arg) => { capturedNotes = arg.contextNotes; return "approve"; },
+        }),
+      });
+      // command source returns [] from buildIncidentPreview;
+      // contextNotes should be empty (no original contextNotes on this incident)
+      assert.deepEqual(capturedNotes, []);
+    });
+
+    it("existing contextNotes are preserved and appended after preview", async () => {
+      let capturedNotes = null;
+      await handleIncident({
+        incident: {
+          source: "correlation",
+          level: "HIGH",
+          reason: "Pattern fired",
+          ruleId: "my-rule",
+          contextNotes: ["existing note"],
+        },
+        config: makeConfig(),
+        runtime: makeRuntime({
+          prompt: async (arg) => { capturedNotes = arg.contextNotes; return "approve"; },
+        }),
+      });
+      // Preview lines come first, existing notes are appended
+      assert.ok(capturedNotes.some((l) => l.includes("correlation")));
+      assert.ok(capturedNotes.some((l) => l.includes("existing note")));
+      // Preview appears before the existing note
+      const corrIdx = capturedNotes.findIndex((l) => l.includes("correlation"));
+      const noteIdx = capturedNotes.findIndex((l) => l.includes("existing note"));
+      assert.ok(corrIdx < noteIdx, "preview should come before existing contextNotes");
+    });
+
+    it("deferred incidents (no TTY) do not receive preview enrichment", async () => {
+      let prompted = false;
+      await handleIncident({
+        incident: {
+          source: "correlation",
+          level: "WARN",
+          reason: "Dependency changed",
+          ruleId: "dep-rule",
+        },
+        config: makeConfig({ autoDeny: [] }),
+        runtime: makeRuntime({
+          canPrompt: false,
+          prompt: async () => { prompted = true; return "approve"; },
+        }),
+      });
+      // Deferred path never calls the prompt
+      assert.equal(prompted, false);
+    });
+  });
+
   // ── stats edge cases ─────────────────────────────────────────────────────────
 
   describe("stats object handling", () => {
@@ -550,5 +810,62 @@ describe("handleIncident()", () => {
       assert.equal(stats.blocked["HIGH"], 2);
       assert.equal(stats.blocked["CRITICAL"], 1);
     });
+  });
+
+  // ── deny-path restore consistency ────────────────────────────────────────────
+  //
+  // All three deny paths must behave identically with respect to onRestore.
+  // Parameterised so the same expectations run against each path.
+
+  describe("restore behavior is consistent across all deny paths", () => {
+    /**
+     * Run handleIncident in a specific deny path and return observed side effects.
+     * @param {"autoDeny"|"criticalNoTTY"|"promptDeny"} path
+     * @param {object} opts  stashRef, restoreOnDeny
+     */
+    async function runDenyPath(path, { stashRef, restoreOnDeny = true } = {}) {
+      const order = [];
+      const config = {
+        autoApprove: [],
+        autoDeny: path === "autoDeny" ? ["CRITICAL"] : [],
+        snapshot: { enabled: true, restoreOnDeny },
+      };
+      const runtime = {
+        canPrompt: path !== "criticalNoTTY",
+        prompt: async () => "deny",
+        onRestore: () => { order.push("restore"); },
+        onTerminate: () => { order.push("terminate"); },
+        onResume: () => {},
+      };
+      const result = await handleIncident({
+        incident: makeIncident({ level: "CRITICAL" }),
+        config,
+        stashRef,
+        runtime,
+      });
+      return { result, order };
+    }
+
+    for (const path of ["autoDeny", "criticalNoTTY", "promptDeny"]) {
+      it(`${path}: outcome is denied`, async () => {
+        const { result } = await runDenyPath(path);
+        assert.equal(result.outcome, "denied");
+      });
+
+      it(`${path}: calls onRestore then onTerminate when stashRef is set`, async () => {
+        const { order } = await runDenyPath(path, { stashRef: "stash@{0}" });
+        assert.deepEqual(order, ["restore", "terminate"]);
+      });
+
+      it(`${path}: skips onRestore when stashRef is absent`, async () => {
+        const { order } = await runDenyPath(path, { stashRef: undefined });
+        assert.deepEqual(order, ["terminate"]);
+      });
+
+      it(`${path}: skips onRestore when restoreOnDeny is false`, async () => {
+        const { order } = await runDenyPath(path, { stashRef: "stash@{0}", restoreOnDeny: false });
+        assert.deepEqual(order, ["terminate"]);
+      });
+    }
   });
 });
