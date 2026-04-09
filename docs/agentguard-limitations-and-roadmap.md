@@ -2,6 +2,10 @@
 
 Using ideas inspired by Datadog (eBPF runtime telemetry) and Wazuh (multi-source detection and rule correlation).
 
+**Last updated: April 9, 2026**
+
+---
+
 ## 1) Current limitations of AgentGuard
 
 ### 1.1 Command interception is output-pattern based
@@ -43,25 +47,38 @@ Limitations include:
 
 Impact: strong repository safety, weaker full-environment recovery.
 
-### 1.5 Rules are mostly single-event and static
-Risk scoring is mostly regex-based on individual command/file events.
+Note: the unified deny path (all deny triggers call restore before terminating) is now implemented. The limitation is in what restore can cover, not in whether it fires.
 
-Impact: weaker context understanding and potential false positives/negatives.
+### 1.5 ~~Rules are mostly single-event and static~~ — Partially addressed
+
+**Status:** The Wazuh-style decoder + rule-engine pipeline is implemented. Six correlation rules detect multi-event patterns across time windows (env-plus-network, mass-delete, force-push-after-delete, env-overwrite, shell-pipe-exec, dependency-change-plus-network). Correlation incidents from all three sources — PTY interceptor, log-based interceptor, and file watcher — now route through the unified enforcement pipeline and can block the session.
+
+Remaining gap: rule definitions are still static (no runtime tuning UI). Adding or adjusting rules requires editing the config file or code.
 
 ### 1.6 Audit model is local by default
 Audit logs are local JSONL by default.
 
 Impact: useful operationally, but limited tamper resistance and centralized compliance controls.
 
+Note: audit-only mode (see §2.3) is now implemented — teams can run AgentGuard in observe-only mode before enabling full enforcement, which increases practical adoption of audit logging.
+
 ### 1.7 Human approval fatigue
 Interactive prompts are useful, but frequent prompts can create fatigue.
 
-Impact: users may over-approve under pressure.
+**Status:** Partially addressed.
+
+- Suppression system: repeated correlation alerts for the same rule are silenced within the detection window.
+- Policy packs: `dev`, `strict`, and `ci` presets let teams quickly set appropriate autoDeny/autoApprove levels without hand-tuning config.
+- Audit-only mode: teams who find prompts too disruptive can run in observe-only mode to build trust before enabling enforcement.
+
+Remaining gap: no dynamic confidence scoring or context-aware suppression (e.g., suppress if agent is working in a known-safe directory).
 
 ### 1.8 Cross-platform parity constraints
 Higher-assurance kernel/runtime telemetry differs by OS.
 
 Impact: uneven assurance model across Linux/macOS/Windows.
+
+---
 
 ## 2) Addressable limitations using Datadog and Wazuh ideas
 
@@ -80,38 +97,29 @@ What it improves:
 - partially improves 1.3,
 - improves audit fidelity in 1.6.
 
-### 2.2 Wazuh-style: decoder + rule-engine pipeline
-Wazuh's model suggests separating parsing from decision logic.
+**Status:** Not yet implemented.
 
-Proposed architecture:
+### 2.2 ~~Wazuh-style: decoder + rule-engine pipeline~~ — Implemented
 
-1. Decoder/normalizer stage converts raw streams into canonical events:
-   - `process_exec`
-   - `file_write`
-   - `file_delete`
-   - `git_operation`
-   - `network_connect`
-2. Rule engine applies policy to normalized events.
-3. Correlation rules score risky sequences across time windows.
+**Status:** Complete.
 
-Example correlations:
+The decoder/normalizer stage (`src/decoder.js`) converts raw PTY lines and filesystem events into canonical typed events (`process_exec`, `file_write`, `file_delete`, `git_operation`, `network_request`). The correlator (`src/correlator.js`) evaluates rules against the shared event bus. Six correlation rules fire enforcement actions — not just notices — through the unified `handleIncident()` pipeline.
 
-- `.env` modification + outbound network connection to unknown host,
-- force push + risky branch operation sequence,
-- mass deletion + mismatch with declared task scope.
-
-What it improves:
-
-- significantly improves 1.5 (context-aware detection),
-- improves 1.7 by allowing suppression/tuning,
-- improves 1.6 with richer event context and governance.
+All three sources share the same event bus, so cross-layer correlations (e.g., file watcher sees `.env` written, PTY interceptor sees outbound connection) fire naturally.
 
 ### 2.3 Wazuh-style tuning, suppression, and policy packs
-Proposed operational controls:
 
-- allowlists and scoped exceptions,
-- deduplication and cooldown windows,
-- policy packs for local dev, CI, and regulated workflows.
+**Status:** Partially implemented.
+
+Implemented:
+- Deduplication and cooldown windows (suppression system, per-rule `windowMs`).
+- Policy packs: named presets (`dev`, `strict`, `ci`) set autoApprove/autoDeny levels. Selected via `"policy": "dev"` in config. Project config always overrides the pack.
+- Audit-only mode: `auditOnly: true` config or `--audit-only` CLI flag — incidents detected and logged, no enforcement. Teams can observe before committing to blocking behavior.
+
+Not yet implemented:
+- Allowlists and scoped path exceptions.
+- Per-directory or per-rule sensitivity overrides.
+- Confidence-based response tiers (different behavior based on detection confidence).
 
 What it improves:
 
@@ -128,6 +136,10 @@ Proposed enhancements:
 What it improves:
 
 - directly improves 1.6 for security/compliance use cases.
+
+**Status:** Not yet implemented.
+
+---
 
 ## 3) Partially addressable limitations
 
@@ -167,6 +179,8 @@ Why partial:
 
 - platform primitives and privilege models differ.
 
+---
+
 ## 4) Limitations that cannot be fully solved by AgentGuard alone
 
 ### 4.1 External side effects in third-party systems
@@ -197,17 +211,30 @@ Reason:
 
 - no wrapper can perfectly normalize opaque, provider-specific behavior in all cases.
 
+---
+
 ## 5) Practical roadmap summary
 
-Recommended sequence:
+| Item | Status |
+|---|---|
+| PTY/output and file-watcher modes as portable fallbacks | ✅ Done |
+| Decoder + correlation rule engine | ✅ Done |
+| Correlation rules trigger enforcement (not just notices) | ✅ Done |
+| Unified deny path (restore on all deny triggers) | ✅ Done |
+| Audit-only mode | ✅ Done |
+| Policy packs (dev / strict / ci) | ✅ Done (basic presets) |
+| Allowlists, scoped exceptions, confidence tiers | ⬜ Not started |
+| Signed / remote audit options | ⬜ Not started |
+| Optional Linux eBPF backend | ⬜ Not started |
 
-1. Add optional Linux eBPF backend for high-fidelity runtime telemetry.
-2. Refactor detection into decoder + correlation rule engine.
-3. Add policy packs, tuning/suppression controls, and confidence-based response tiers.
-4. Add signed/remote audit options for stronger governance.
-5. Keep current PTY/output and file-watcher modes as portable fallbacks.
+Remaining sequence for higher assurance:
 
-Expected outcome:
+1. Allowlists and scoped path exceptions — reduces false positives without disabling rules.
+2. Signed/remote audit — makes the audit log trustworthy for compliance use cases.
+3. Optional Linux eBPF backend — closes the silent-command blind spot (1.1, 1.2).
+4. Intent context — compare agent actions against the developer's original prompt (the key unsolved differentiator).
+
+Expected outcome from completing the remaining items:
 
 - materially fewer blind spots,
 - improved detection quality and operator trust,

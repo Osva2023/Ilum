@@ -1,5 +1,5 @@
 # AgentGuard — Current Status & Next Steps
-**Date:** April 3, 2026
+**Date:** April 9, 2026
 
 ---
 
@@ -7,64 +7,121 @@
 
 AgentGuard is a terminal wrapper that sits between the developer and any AI coding agent (Claude Code, Codex, aider). Its job is to monitor what the agent does while it works.
 
-It now has three active defense layers:
+It has three active defense layers plus a unified enforcement pipeline.
 
 **Layer 1 — PTY Interceptor (shell commands)**
-Monitors the terminal in real time. If the agent tries to run destructive commands (`rm -rf`, `git reset --hard`, `git push --force`, etc.), AgentGuard classifies them by risk level and can require approval before execution.
+Monitors the terminal in real time. If the agent tries to run destructive commands (`rm -rf`, `git reset --hard`, `git push --force`, etc.), AgentGuard classifies them by risk level and routes them through the enforcement pipeline before execution.
 
 **Layer 2 — File Watcher (file edits)**
-Monitors the filesystem in parallel. Detects any file the agent modifies — even if the agent doesn't use shell commands (as Claude Code does in `--print` mode). If the file is sensitive (`.env`, private keys, CI/CD configs), it alerts the developer.
+Monitors the filesystem in parallel. Detects any file the agent modifies — even if the agent doesn't use shell commands (as Claude Code does in `--print` mode). Sensitive file touches (`.env`, private keys, CI/CD configs) are logged and surface in the Post-Action Review after the session ends.
 
 **Layer 3 — Correlation Rule Engine (multi-event detection)**
-Sits above both layers 1 and 2. Instead of reacting to individual commands or file changes, it watches for dangerous *combinations* of events within a time window. Six built-in rules detect patterns like secret file modified → network request (possible exfiltration), mass file deletion, force push after deletion, shell pipe execution, and more. Fired rules surface as informational notices (`⚡ Correlation`) without blocking the existing approval flow. A suppression system prevents alert fatigue by silencing repeated triggers within the detection window.
+Sits above both layers 1 and 2. Instead of reacting to individual commands or file changes, it watches for dangerous *combinations* of events within a time window. Six built-in rules detect patterns like secret file modified → network request (possible exfiltration), mass file deletion, force push after deletion, shell pipe execution, and more.
+
+Correlation incidents from all three layers — PTY, log-based interceptor, and file watcher — now route through the unified enforcement pipeline. CRITICAL correlation incidents are blocked immediately; HIGH incidents show an approval prompt; WARN incidents are deferred when no TTY is available. A suppression system prevents alert fatigue by silencing repeated triggers within the detection window.
+
+**Unified Enforcement Pipeline**
+All incidents — whether from command interception, correlation rules, or file watch events — go through a single `handleIncident()` layer. Decision order: autoDeny → autoApprove → deferred (no TTY) → interactive prompt. All deny paths (autoDeny, CRITICAL-no-TTY, prompt deny) share identical behavior: restore snapshot → terminate session.
 
 **Snapshot System**
-At the start of each session, AgentGuard automatically runs `git stash` to save the current repo state. If something goes wrong, the developer can roll back instantly.
+At the start of each session, AgentGuard automatically runs `git stash` to save the current repo state. All deny paths restore the snapshot automatically before terminating.
 
 **Audit Log**
-Every session is recorded in `~/.agentguard/audit.log` — commands run, files touched, what was approved and what was blocked.
+Every session is recorded in `~/.agentguard/audit.log` — session start/end, incidents detected, incidents approved, incidents denied. JSON-lines format, queryable with `jq`.
+
+**Audit-Only Mode**
+When `auditOnly: true` is set in config (or `--audit-only` CLI flag is used), AgentGuard detects and logs all incidents but takes no enforcement action. No prompts, no blocks, no restore, no termination. Useful for observing behavior before turning on full enforcement.
+
+**Policy Packs**
+Named config presets (`dev`, `strict`, `ci`) set `autoApprove` and `autoDeny` levels as a starting point. Selected via `"policy": "dev"` in the config file. Project-level config always overrides the pack. Precedence: defaults → pack → project config.
+
+| Pack | autoApprove | autoDeny | Use case |
+|---|---|---|---|
+| `dev` | `["WARN"]` | `["CRITICAL"]` | Local development |
+| `strict` | `[]` | `["CRITICAL","HIGH"]` | Security-sensitive work |
+| `ci` | `[]` | `["CRITICAL","HIGH","WARN"]` | CI pipelines |
 
 ---
 
-## What Was Built Today (Apr 3) — Phase 3: Rule Engine
+## Architecture
 
-### ✅ New modules (101 tests, 0 failures)
-- `src/decoder.js` — normalises raw PTY lines and filesystem events into canonical typed event objects (`process_exec`, `file_write`, `file_delete`) with subtypes (`git_operation`, `network_request`, `secret`, `cicd`, etc.)
-- `src/event-bus.js` — in-memory time-windowed event buffer. Lazy eviction on push, query by type/subtype/since, no background timers.
-- `src/correlation-rules.js` — 6 multi-event correlation rules: `env-plus-network`, `mass-delete`, `force-push-after-delete`, `env-overwrite`, `shell-pipe-exec`, `dependency-change-plus-network`
-- `src/correlator.js` — thin wrapper that evaluates all or one rule against a bus instance
-- `src/suppression.js` — cooldown manager that prevents repeated alerts for the same rule. Uses `Map<ruleId, expiresAtMs>` with lazy pruning.
-- `src/interceptor.js` — integrated: pipeline runs on every line, correlation notices surface as `⚡ Correlation` in magenta. `extractCommand()` removed, replaced by `decodeCommand()`.
-- `src/filewatcher.js` — integrated: every file event feeds the shared bus. Both layers share the same singletons so cross-layer correlations fire naturally.
+```
+raw event → decoder.js → event-bus.js → correlator.js → suppression.js
+                                                               ↓
+                                                     handleIncident()
+                                                    ↙      ↓       ↘
+                                              autoDeny  prompt  autoApprove
+                                                  ↓       ↓
+                                             restore → terminate
+```
 
-### Architecture
-```
-raw event → decoder.js → event-bus.js → correlator.js → suppression.js → notice
-                                                                ↓
-                                          existing classify() → approval flow (unchanged)
-```
+All three sources (PTY interceptor, log-based interceptor, file watcher) feed into the same `handleIncident()` with source-specific runtime callbacks.
 
 ---
 
-## What Was Tested Before (Mar 27)
+## Test Coverage
 
-### ✅ What Worked
-- Global install via `npm install -g .`
-- Automatic snapshot on detecting repo changes
-- Watcher detected `index.js` edit in real time while Claude worked
-- Watcher detected `.env` edit and triggered the approval prompt (HIGH RISK)
-- Session summary with command count, file edits, and snapshot status
-- Bug fix: summary no longer shows "not a git repo" when working tree is clean
+**324 tests, 0 failures** across 75 suites.
 
-### ⚠️ What the Test Revealed
-- In `--print` mode, Claude writes files and finishes in milliseconds — the watcher detects the change but can't pause the agent in time. Snapshot rollback is the correct solution for this case.
-- The PTY interceptor captures nothing in `--print` mode — only the watcher works there.
+| Suite | Tests |
+|---|---|
+| enforcement.test.js | 71 |
+| correlator.test.js | — |
+| decoder.test.js | — |
+| suppression.test.js | — |
+| preview.test.js | 22 |
+| logger.test.js | 12 |
+| pty-correlation.test.js | 16 |
+| filewatcher-correlation.test.js | 20 |
+| interceptor-command.test.js | 15 |
+| policy-packs.test.js | 25 |
+| audit-only.test.js | 27 |
+| classifier.test.js | 63 |
+| approval-diff.test.js | 18 |
+| config.test.js | 6 |
+
+---
+
+## What's Been Shipped
+
+- [x] PTY command interceptor + log-based fallback
+- [x] File watcher (catches `--print` mode agents)
+- [x] Post-Action Review — per-file diff + keep/rollback
+- [x] Correlation rule engine — 6 multi-event rules with suppression
+- [x] **Correlation → enforcement** — all three layers route through `handleIncident()`; CRITICAL fires block the session
+- [x] Unified deny path — restore always runs on deny, across all sources
+- [x] Incident preview before approval prompt (source-specific context)
+- [x] Audit log with full incident lifecycle (detected / approved / denied)
+- [x] Default config: `autoDeny: ["CRITICAL"]`
+- [x] **Audit-only mode** — observe without blocking (`auditOnly: true` / `--audit-only`)
+- [x] **Policy packs** — named presets: `dev`, `strict`, `ci`
+- [x] Dashboard (local web UI with audit log and session stats)
+
+---
+
+## What's Still Missing
+
+### Technical
+- [ ] **Intent context** — pass the developer's original prompt to AgentGuard so it can compare the agent's action against declared intent. Alert when the agent touches something out of declared scope.
+- [ ] **Verified multi-agent support** — tested with Claude Code. Still needs real-world testing with Codex CLI, aider, Continue.
+- [ ] **eBPF backend (Linux)** — kernel-level telemetry to catch silent commands that never appear in PTY output.
+- [ ] **Signed / remote audit** — hash-chained audit entries, optional remote log forwarding for compliance use cases.
+- [ ] **Demo video / GIF** — showing the moment AgentGuard intercepts a `.env` touch or a force push.
+
+### Product / UX
+- [ ] **GIF / demo video** — without this there's nothing to show on GitHub or Product Hunt.
+- [ ] **Multi-agent testing** — Codex, aider, Continue need real sessions to surface edge cases.
+
+### Outreach / Validation
+- [ ] **5 beta testers** — developers who actively use Claude Code or Codex.
+- [ ] **Interview first users** — what broke? What felt safe? What was annoying?
+- [ ] **Product Hunt / HN launch** — once stable with betas.
 
 ---
 
 ## Key Design Decision
 
-> **AgentGuard should not block what the developer explicitly asks for.**
+> **AgentGuard should not block what the developer explicitly asked for.**
 > Its value is in detecting unintended side effects.
 
 | Scenario | AgentGuard intervenes? |
@@ -74,55 +131,7 @@ raw event → decoder.js → event-bus.js → correlator.js → suppression.js �
 | "Clean up the code" → Claude runs `rm -rf utils/` | ✅ Unexpected destructive action |
 | "Delete the old tests" → Claude deletes tests | ❌ That was the intent |
 
-This means AgentGuard needs **intent context** — knowing what the developer asked the agent to do, so it can distinguish expected actions from side effects. This is the product's most important differentiator and no tool on the market does it today.
-
----
-
-## What's Missing
-
-### Technical
-- [x] ~~**Correlation rule engine**~~ — ✅ shipped Apr 3 (6 rules, suppression, 101 tests)
-- [ ] **Automatic rollback on deny** — when the watcher detects a sensitive file change and the user denies it, AgentGuard should restore the snapshot automatically. The snapshot already exists; the missing piece is wiring deny → restore.
-- [ ] **Correlation → block (not just notice)** — today correlation rules surface as informational notices. Next step: make CRITICAL correlations trigger the approval prompt, not just log.
-- [ ] **Intent context** — pass the developer's original prompt to AgentGuard so it can compare the agent's action against declared intent. Alert when Claude touches something out of scope.
-- [ ] **Diff preview** — before approving or denying, show exactly what changed in the file (like `git diff`). Currently only shows the filename.
-- [ ] **Audit-only mode** — run without interrupting, just log. Useful for developers who want to observe what the agent does without blocking anything.
-- [ ] **Per-project config** — `agentguard.config.json` defining which files to protect, which risk levels to auto-approve, which directories are off-limits.
-- [ ] **Multi-agent support** — tested with Claude Code. Still needs testing with Codex CLI (`@openai/codex`), aider, Continue.
-- [ ] **Automated test suite** — a set of "malicious commands" that verifies AgentGuard catches 100% of them.
-
-### Product / UX
-- [ ] **Clear install instructions** — `npm install -g agentguard` + 2-minute setup
-- [ ] **GIF / demo video** — showing the moment AgentGuard intercepts a `.env` touch. Without this there's nothing to show on GitHub or Product Hunt.
-- [ ] **Improved README** — real examples, use cases, and the "why it matters" story
-
-### Outreach / Validation
-- [ ] **Publish repo on GitHub** — without announcing, just make it available
-- [ ] **5 beta testers** — developers who actively use Claude Code or Codex. Channels: r/LocalLLaMA, r/ClaudeAI, Anthropic Discord, Indie Hackers community
-- [ ] **Interview first users** — what agent do they use? Have they lost work to an agent mistake? What would give them more confidence?
-- [ ] **Updated landing page** — the current Venture Swarm page is generic. It needs to reflect the real product that exists today.
-
-### Strategic
-- [ ] **Product Hunt / HN "Show HN" launch** — once stable with betas. Goal: 100+ GitHub stars, real downloads.
-- [ ] **Decide monetization model** — Free local / Pro cloud $9/mo / Team $29/mo. When to activate Stripe?
-- [ ] **Domain name** — `agentguard.dev` or another option. Lock this in before public launch.
-
----
-
-## Logical Order of Next Steps
-
-```
-1. [x] Correlation rule engine          ← ✅ shipped Apr 3
-2. Correlation → block on CRITICAL      ← wire rule engine into approval flow
-3. Automatic rollback on deny           ← fixes the most critical bug
-4. Diff preview before approving        ← makes the product actually useful
-5. README + demo GIF                    ← nothing to show without this
-6. GitHub public repo                   ← foundation for everything else
-7. 5 beta testers                       ← real validation
-8. Intent context (MVP)                 ← the key differentiator
-9. HN / Product Hunt launch             ← traction
-10. Backend + Stripe                    ← monetization
-```
+This requires **intent context** — knowing what the developer asked the agent to do, so AgentGuard can distinguish expected actions from side effects. This is the product's most important unsolved problem.
 
 ---
 
