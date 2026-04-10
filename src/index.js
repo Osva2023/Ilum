@@ -27,6 +27,7 @@ export {
   logDetected,
   logIncidentApproved,
   logIncidentDenied,
+  logSnapshotRestore,
   sessionId,
   LOG_FILE,
   AGENTGUARD_DIR,

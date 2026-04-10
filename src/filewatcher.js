@@ -17,7 +17,7 @@
 import chokidar from "chokidar";
 import path from "path";
 import chalk from "chalk";
-import { logIntercepted, logSessionEnd } from "./logger.js";
+import { logIntercepted, logSessionEnd, logSnapshotRestore } from "./logger.js";
 import { decodeFileEvent } from "./decoder.js";
 import { bus } from "./event-bus.js";
 import { evaluate } from "./correlator.js";
@@ -147,6 +147,7 @@ export function startFileWatcher({ cwd, agent, stashRef, config, stats }) {
                 ? chalk.green(`[AgentGuard] ${snap.message}`)
                 : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
             );
+            logSnapshotRestore(snap, agent);
           },
           onTerminate: () => {
             console.error(chalk.red("\n[AgentGuard] Operation blocked."));

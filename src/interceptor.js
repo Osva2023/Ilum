@@ -25,7 +25,7 @@
 
 import { spawn } from "child_process";
 import { classify, requiresApproval } from "./classifier.js";
-import { logSessionEnd } from "./logger.js";
+import { logSessionEnd, logSnapshotRestore } from "./logger.js";
 import { restoreSnapshot } from "./snapshot.js";
 import chalk from "chalk";
 import { decodeCommand } from "./decoder.js";
@@ -92,6 +92,7 @@ export async function runInterceptor({ agent, agentArgs, stashRef, config, stats
                 ? chalk.green(`[AgentGuard] ${snap.message}`)
                 : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
             );
+            logSnapshotRestore(snap, agent);
           },
           onTerminate: () => {
             console.error(chalk.red("\n[AgentGuard] Operation blocked."));

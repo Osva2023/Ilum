@@ -12,6 +12,7 @@
  *   event:     "command_intercepted" | "command_approved" | "command_denied"
  *              | "session_start" | "session_end" | "snapshot_created"
  *              | "incident_detected" | "incident_approved" | "incident_denied"
+ *              | "snapshot_restore"
  *   source:    origin of the incident ("command" | "correlation" | "filewatch")
  *              — omitted for command/session helpers
  *   level:     risk level (SAFE / WARN / HIGH / CRITICAL) — omitted for session events
@@ -169,6 +170,21 @@ export function logIncidentDenied(incident, agent) {
     reason,
     ...(command !== undefined && { command }),
     ...(ruleId !== undefined && { ruleId }),
+    agent,
+  });
+}
+
+/**
+ * Log the result of a snapshot restore attempt triggered by a deny action.
+ *
+ * @param {{ restored: boolean, message: string }} snap  Return value of restoreSnapshot()
+ * @param {string} [agent]
+ */
+export function logSnapshotRestore(snap, agent) {
+  log({
+    event: "snapshot_restore",
+    restored: snap.restored,
+    message: snap.message,
     agent,
   });
 }

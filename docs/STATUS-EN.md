@@ -61,7 +61,7 @@ All three sources (PTY interceptor, log-based interceptor, file watcher) feed in
 
 ## Test Coverage
 
-**324 tests, 0 failures** across 75 suites.
+**338 tests, 0 failures** across 92 suites.
 
 | Suite | Tests |
 |---|---|
@@ -76,6 +76,7 @@ All three sources (PTY interceptor, log-based interceptor, file watcher) feed in
 | interceptor-command.test.js | 15 |
 | policy-packs.test.js | 25 |
 | audit-only.test.js | 27 |
+| snapshot-restore.test.js | 14 |
 | classifier.test.js | 63 |
 | approval-diff.test.js | 18 |
 | config.test.js | 6 |
@@ -89,7 +90,7 @@ All three sources (PTY interceptor, log-based interceptor, file watcher) feed in
 - [x] Post-Action Review — per-file diff + keep/rollback
 - [x] Correlation rule engine — 6 multi-event rules with suppression
 - [x] **Correlation → enforcement** — all three layers route through `handleIncident()`; CRITICAL fires block the session
-- [x] Unified deny path — restore always runs on deny, across all sources
+- [x] Unified deny path — restore always runs on deny, across all sources; restore result written to audit log (`snapshot_restore` event)
 - [x] Incident preview before approval prompt (source-specific context)
 - [x] Audit log with full incident lifecycle (detected / approved / denied)
 - [x] Default config: `autoDeny: ["CRITICAL"]`

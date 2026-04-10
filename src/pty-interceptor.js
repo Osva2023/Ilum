@@ -22,6 +22,7 @@
 import { classify, requiresApproval, scoreWithContext } from "./classifier.js";
 import {
   logSessionEnd,
+  logSnapshotRestore,
   sessionId,
 } from "./logger.js";
 import { restoreSnapshot } from "./snapshot.js";
@@ -190,6 +191,7 @@ export async function runPtyInterceptor({
             ? chalk.green(`[AgentGuard] ${snap.message}`)
             : chalk.red(`[AgentGuard] Restore failed: ${snap.message}`)
         );
+        logSnapshotRestore(snap, agent);
       },
       onTerminate: () => {
         console.error(chalk.red("\n[AgentGuard] Operation blocked."));

@@ -1,4 +1,4 @@
-# AgentGuard Limitations and Improvement Paths
+the# AgentGuard Limitations and Improvement Paths
 
 Using ideas inspired by Datadog (eBPF runtime telemetry) and Wazuh (multi-source detection and rule correlation).
 
@@ -47,7 +47,7 @@ Limitations include:
 
 Impact: strong repository safety, weaker full-environment recovery.
 
-Note: the unified deny path (all deny triggers call restore before terminating) is now implemented. The limitation is in what restore can cover, not in whether it fires.
+Note: the unified deny path (all deny triggers call restore before terminating) is now implemented. Restore result (success or failure) is written to the audit log as a `snapshot_restore` event. The limitation is in what restore can cover, not in whether it fires or whether it is recorded.
 
 ### 1.5 ~~Rules are mostly single-event and static~~ — Partially addressed
 
