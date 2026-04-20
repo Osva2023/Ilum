@@ -8,6 +8,14 @@ It is **not an editor plugin**. It does not run inside VS Code or Cursor. It wor
 
 ---
 
+## In action
+
+![AgentGuard intercepting a CRITICAL mass-delete](docs/screenshots/critical-intercept.png)
+![Post-Action Review](docs/screenshots/post-action-review.png)
+![Session Summary](docs/screenshots/session-summary.png)
+
+---
+
 ## The problem
 
 AI coding agents are powerful, but they routinely do more than you asked:
