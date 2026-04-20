@@ -63,32 +63,39 @@ function resolveStashIndex(stashRef) {
 }
 
 /**
- * Run `git diff HEAD -- {file}` and return colourised output, truncated to
- * maxLines.  Returns null when there is no diff or git is not available.
+ * Return a colourised unified diff for a single file, truncated to maxLines.
  *
- * @param {string} file     - Relative file path
- * @param {string} cwd      - Working directory
- * @param {number} maxLines - Maximum diff lines to show (default 50)
+ * Primary baseline is the snapshot stash (stash@{N}) captured by
+ * `git stash push -u` at session start — its tree covers both tracked and
+ * untracked content, so modified files and agent-created files both surface
+ * a meaningful diff.  Falls back to `git diff HEAD -- file` when no
+ * stashIndex is available (non-git dir or clean tree at session start).
+ * Returns null when neither produces output.
+ *
+ * @param {string}      file       - Relative file path
+ * @param {string}      cwd        - Working directory
+ * @param {string|null} stashIndex - Resolved stash ref (stash@{N}) or null
+ * @param {number}      maxLines   - Maximum diff lines to show (default 50)
  */
-function getFileDiff(file, cwd, maxLines = 50) {
-  const result = spawnSync("git", ["diff", "HEAD", "--", file], {
-    encoding: "utf8",
-    cwd,
-    timeout: 10_000,
-  });
-
-  if (result.status !== 0 || result.error || !result.stdout.trim()) {
-    // Try untracked file diff (new file — compare to /dev/null via git show)
-    const show = spawnSync("git", ["diff", "--cached", "--", file], {
+function getFileDiff(file, cwd, stashIndex, maxLines = 50) {
+  if (stashIndex) {
+    const result = spawnSync("git", ["diff", stashIndex, "--", file], {
       encoding: "utf8",
       cwd,
       timeout: 10_000,
     });
-    if (show.status !== 0 || show.error || !show.stdout.trim()) return null;
-    return colourDiff(show.stdout, maxLines);
+    if (result.status === 0 && !result.error && result.stdout.trim()) {
+      return colourDiff(result.stdout, maxLines);
+    }
   }
 
-  return colourDiff(result.stdout, maxLines);
+  const head = spawnSync("git", ["diff", "HEAD", "--", file], {
+    encoding: "utf8",
+    cwd,
+    timeout: 10_000,
+  });
+  if (head.status !== 0 || head.error || !head.stdout.trim()) return null;
+  return colourDiff(head.stdout, maxLines);
 }
 
 /**
@@ -263,7 +270,7 @@ export async function showPostActionReview({ fileChanges, stashRef, cwd }) {
     );
 
     // Show diff
-    const diff = getFileDiff(change.file, cwd);
+    const diff = getFileDiff(change.file, cwd, stashIndex);
     if (diff) {
       console.error(chalk.cyan("  ── diff ──────────────────────────────────────────────────"));
       // Indent diff lines for readability

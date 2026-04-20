@@ -14,6 +14,26 @@
  * This module is intentionally pure: no side effects, no logging, no I/O.
  */
 
+// ─── Path exclusions ──────────────────────────────────────────────────────────
+
+// TODO: make this configurable via agentguard.config.json when allowlists are implemented
+const BUILD_ARTIFACT_PATHS = [
+  ".next/",
+  "dist/",
+  "build/",
+  "out/",
+  "node_modules/.cache/",
+  ".turbo/",
+  ".cache/",
+  "coverage/",
+  ".expo/",
+];
+
+function isBuildArtifact(filePath) {
+  if (!filePath) return false;
+  return BUILD_ARTIFACT_PATHS.some((p) => filePath.includes(p));
+}
+
 // ─── Internal helper ──────────────────────────────────────────────────────────
 
 /**
@@ -62,7 +82,10 @@ export const CORRELATION_RULES = [
     windowMs: 20_000,
     match(bus) {
       const since = sinceWindow(20_000);
-      return bus.query({ type: "file_delete", since }).length >= 3;
+      const deletes = bus
+        .query({ type: "file_delete", since })
+        .filter((e) => !isBuildArtifact(e.file));
+      return deletes.length >= 3;
     },
   },
 

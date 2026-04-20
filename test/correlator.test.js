@@ -202,6 +202,14 @@ describe("rule: mass-delete", () => {
     }
     assert.equal(evaluateOne(bus, "mass-delete"), null);
   });
+
+  it("does not fire when 3 deletions are all under dist/ (build artifacts)", () => {
+    const bus = freshBus();
+    bus.push(fileEvent("file_delete", "source", "dist/index.js"));
+    bus.push(fileEvent("file_delete", "source", "dist/bundle.css"));
+    bus.push(fileEvent("file_delete", "source", "dist/assets/logo.svg"));
+    assert.equal(evaluateOne(bus, "mass-delete"), null);
+  });
 });
 
 // ─── Rule: force-push-after-delete ───────────────────────────────────────────

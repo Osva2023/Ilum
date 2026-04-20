@@ -212,10 +212,10 @@ export async function runPtyInterceptor({
     let handlingApproval = false; // prevent re-entrant prompts
 
     pty.onData(async (data) => {
+      if (handlingApproval) return; // buffer scanning paused during prompt
+
       // Always forward raw PTY bytes to the user's terminal.
       process.stdout.write(data);
-
-      if (handlingApproval) return; // buffer scanning paused during prompt
 
       lineBuf += data;
       const lines = lineBuf.split("\n");
@@ -243,6 +243,7 @@ export async function runPtyInterceptor({
             handlingApproval = true;
             disableForwarding();
             try { pty.pause(); } catch {}
+            await new Promise(r => setImmediate(r));
 
             const { outcome } = await handleIncident({
               incident,
@@ -281,6 +282,7 @@ export async function runPtyInterceptor({
           handlingApproval = true;
           disableForwarding();
           try { pty.pause(); } catch {}
+          await new Promise(r => setImmediate(r));
 
           const { outcome } = await handleIncident({
             incident: {

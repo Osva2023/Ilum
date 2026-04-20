@@ -64,6 +64,15 @@ function riskLevel(filePath) {
   return "WARN";
 }
 
+// ─── Per-file cooldown for sensitive-file notices ────────────────────────────
+
+// Prevents spammy stderr notices and audit entries when a tool rewrites the
+// same sensitive file in quick succession (e.g. `npm install` touching
+// package-lock.json).  fileChanges and stats are unaffected — only the
+// stderr line and logIntercepted entry are throttled.
+const SENSITIVE_COOLDOWN_MS = 10_000;
+const recentSensitive = new Map();
+
 // ─── Watcher ─────────────────────────────────────────────────────────────────
 
 /**
@@ -179,11 +188,15 @@ export function startFileWatcher({ cwd, agent, stashRef, config, stats }) {
     if (sensitive) {
       if (stats) stats.intercepted = (stats.intercepted || 0) + 1;
 
-      // Audit log — always record sensitive touches
-      logIntercepted({ command: `${event}: ${rel}`, level, reason: "Sensitive file modified by agent", agent });
+      const now = Date.now();
+      const last = recentSensitive.get(rel);
+      const onCooldown = last && now - last < SENSITIVE_COOLDOWN_MS;
 
-      // Quiet notice — no blocking, no prompt
-      console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel}`));
+      if (!onCooldown) {
+        recentSensitive.set(rel, now);
+        logIntercepted({ command: `${event}: ${rel}`, level, reason: "Sensitive file modified by agent", agent });
+        console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel}`));
+      }
     } else {
       // Non-sensitive change — log quietly
       console.error(chalk.gray(`[AgentGuard] 📝 ${event}: ${rel}`));

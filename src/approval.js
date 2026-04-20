@@ -210,7 +210,14 @@ export async function promptApproval(result) {
 
   const hasExtra = diffLines.length > 0 || noteLines.length > 0;
 
-  console.error(""); // blank line before box
+  process.stderr.write('\r\x1b[2K\n'); // clear current line
+  console.error(''); // blank line
+  const headerText = '  ⚠  AgentGuard — agent paused';
+  const headerColor =
+    level === "CRITICAL" || level === "HIGH" ? chalk.red.bold :
+    level === "WARN" ? chalk.yellow.bold : chalk.white;
+  console.error(headerColor(headerText));
+  console.error('');
   console.error(boxTop());
   console.error(boxRow(header));
   console.error(boxDivider());
