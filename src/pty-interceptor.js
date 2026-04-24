@@ -205,10 +205,11 @@ export async function runPtyInterceptor({
         const pgid = -pid;  // negative pid = signal the whole process group
         try { pty.kill(); } catch {}  // SIGHUP (node-pty default)
 
-        // Exit alt-screen, reset SGR attributes, land on a fresh line so
-        // the user sees a clean terminal immediately — even if children
-        // take the full escalation window to die.
-        process.stderr.write("\x1b[?1049l\x1b[0m\r\n");
+        // Full terminal reset (RIS — Reset to Initial State). Corrects
+        // arbitrary corruption left by TUI agents (alt-screen, character
+        // sets, scroll regions, SGR, cursor keys, etc.) — a targeted
+        // \x1b[?1049l + \x1b[0m is not enough for agents like gh copilot.
+        process.stderr.write("\x1Bc");
 
         // Escalate if the process group ignores SIGHUP: 500ms → SIGTERM →
         // 500ms → SIGKILL. process.kill(pid, 0) probes the session leader;
