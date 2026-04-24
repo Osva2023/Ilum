@@ -198,20 +198,23 @@ export async function runPtyInterceptor({
         cleanup();
         logSessionEnd(agent);
         const pid = pty.pid;
+        const pgid = -pid;  // negative pid = signal the whole process group
         try { pty.kill(); } catch {}  // SIGHUP (node-pty default)
 
-        // Escalate if the child ignores SIGHUP: SIGHUP → 500ms → SIGTERM →
-        // 500ms → SIGKILL. process.kill(pid, 0) probes existence; if the
-        // process is already gone it throws and we skip the next signal.
+        // Exit alt-screen, reset SGR attributes, land on a fresh line so
+        // the user sees a clean terminal immediately — even if children
+        // take the full escalation window to die.
+        process.stderr.write("\x1b[?1049l\x1b[0m\r\n");
+
+        // Escalate if the process group ignores SIGHUP: 500ms → SIGTERM →
+        // 500ms → SIGKILL. process.kill(pid, 0) probes the session leader;
+        // if it's already dead we skip further signals. Signals target the
+        // whole group (-pid) so children forked off the agent are swept up.
         (async () => {
           await new Promise((r) => setTimeout(r, 500));
-          try { process.kill(pid, 0); process.kill(pid, "SIGTERM"); } catch {}
+          try { process.kill(pid, 0); process.kill(pgid, "SIGTERM"); } catch {}
           await new Promise((r) => setTimeout(r, 500));
-          try { process.kill(pid, 0); process.kill(pid, "SIGKILL"); } catch {}
-
-          // Exit alt-screen, reset SGR attributes, land on a fresh line so
-          // any leftover bytes from the dying child don't corrupt the prompt.
-          process.stderr.write("\x1b[?1049l\x1b[0m\r\n");
+          try { process.kill(pid, 0); process.kill(pgid, "SIGKILL"); } catch {}
 
           resolve(1);
         })();
