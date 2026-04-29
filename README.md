@@ -331,7 +331,11 @@ jq 'select(.event == "snapshot_restore")' ~/.agentguard/audit.log
 
 AgentGuard is in early beta. These are known, honest gaps:
 
-**Command interception is output-pattern based.** It works by reading terminal output lines. Commands that execute silently, use non-standard output formatting, or run via internal process APIs (without echoing a shell command) can slip through undetected.
+**Command interception depends on output patterns, not actual execution.** AgentGuard detects commands by reading the agent's terminal output. Agents like Claude Code and Codex render tool calls in their own UI format (e.g. `⏺ Bash(...)`) which does not match the shell-prompt patterns AgentGuard looks for. As a result, command interception is currently unreliable for these agents.
+
+The file watcher (Layer 2) is the primary defense for Claude Code and Codex sessions — it detects filesystem changes regardless of how the agent executed them.
+
+A SHELL wrapper (intercepting `/bin/sh` directly) is planned to fix this gap properly.
 
 **No kernel-level visibility.** AgentGuard does not monitor OS-level events (`execve`, `unlink`, `openat`, `connect`). It infers behavior from visible terminal output and filesystem changes, not from what actually executed at the OS level.
 

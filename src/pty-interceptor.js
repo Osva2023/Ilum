@@ -1,24 +1,41 @@
 /**
- * AgentGuard PTY Interceptor  (Phase 1 — real PTY mode)
+ * AgentGuard PTY Interceptor  (Phase 1 — real PTY mode + shell wrapper)
  *
  * Spawns the agent inside a proper pseudo-terminal using node-pty so the
  * agent sees a real TTY (readline editing, colour output, curses, etc. all
  * work).  PTY output is forwarded to the user's terminal; detected shell
- * commands are classified and flagged for approval exactly as the log-based
- * interceptor does.
+ * commands are classified and flagged for approval.
  *
- * Key differences from Phase 0 interceptor:
- *   • Uses node-pty instead of child_process.spawn with piped stdio
- *   • Handles terminal resize (SIGWINCH → pty.resize)
- *   • Disables raw-mode stdin forwarding while showing the approval prompt
- *     so the prompt's own readline can work cleanly
- *   • Respects config.autoApprove and config.autoDeny arrays
+ * Layered command detection:
+ *   1. PTY-output decoder (Layer 1) — parses agent stdout/stderr for shell
+ *      prompt prefixes ($ / % / > / #) or "Running:" annotations.  Brittle
+ *      against agents that render tool calls in custom UI (Claude Code,
+ *      Codex CLI).
+ *   2. Shell wrapper + adjudication daemon (Layer 1.5) — agent's $SHELL is
+ *      replaced with `agentguard-shell`, which forwards every `sh -c <cmd>`
+ *      call to a Unix-socket daemon (src/shell-daemon.js) for classify +
+ *      handleIncident before exec.  Catches commands regardless of how the
+ *      agent prints them.
+ *   3. File watcher (Layer 2) — chokidar-based watch over the working dir,
+ *      catches the *effects* of any commands the first two layers miss.
+ *
+ * Concurrency:
+ *   The shell daemon owns the single adjudication mutex.  Both Layer 1
+ *   (PTY scanner) and Layer 1.5 (shell wrapper) route through
+ *   `daemon.adjudicate(incident, runtime)` so two prompts can never race
+ *   for the TTY.
  *
  * Graceful fallback:
  *   PTY_AVAILABLE is exported so callers can detect whether node-pty loaded
- *   and fall back to the log-based interceptor when it hasn't.
+ *   and fall back to the log-based interceptor when it hasn't.  If the
+ *   shell wrapper binary is missing, we log a warning and continue without
+ *   Layer 1.5 — the rest of the session still works.
  */
 
+import path from "path";
+import fs from "fs";
+import os from "os";
+import { fileURLToPath } from "url";
 import { classify, requiresApproval, scoreWithContext } from "./classifier.js";
 import {
   logSessionEnd,
@@ -33,7 +50,7 @@ import { decodeCommand } from "./decoder.js";
 import { bus } from "./event-bus.js";
 import { evaluate } from "./correlator.js";
 import { filterFired, suppression } from "./suppression.js";
-import { handleIncident } from "./enforcement.js";
+import { startShellDaemon } from "./shell-daemon.js";
 
 /** Resolve a binary name to its full path using `which`. */
 function resolveBin(name) {
@@ -46,6 +63,33 @@ function resolveBin(name) {
   } catch {
     return name; // fallback — let node-pty give the real error
   }
+}
+
+/**
+ * Locate the agentguard-shell wrapper.
+ *
+ * Resolution order:
+ *   1. `<repo>/shell-wrapper/agentguard-shell` (Go binary, preferred).
+ *   2. `<repo>/shell-wrapper/agentguard-shell.sh` (POSIX fallback).
+ *   3. Returns null — caller logs a warning and continues without Layer 1.5.
+ *
+ * @returns {string|null}  Absolute path to an executable wrapper, or null.
+ */
+function resolveWrapperPath() {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(moduleDir, "..");
+  const candidates = [
+    path.join(repoRoot, "shell-wrapper", "agentguard-shell"),
+    path.join(repoRoot, "shell-wrapper", "agentguard-shell.sh"),
+  ];
+  for (const p of candidates) {
+    try {
+      const stat = fs.statSync(p);
+      // Bit 0o111 = any execute bit (user / group / other).
+      if (stat.isFile() && (stat.mode & 0o111)) return p;
+    } catch {}
+  }
+  return null;
 }
 
 // ─── node-pty availability ───────────────────────────────────────────────────
@@ -117,74 +161,102 @@ export async function runPtyInterceptor({
 
   const { spawn: ptySpawn } = _nodePty;
 
-  return new Promise((resolve) => {
-    // ── spawn PTY ─────────────────────────────────────────────────────────
-    const resolvedAgent = resolveBin(agent);
-    const pty = ptySpawn(resolvedAgent, agentArgs, {
-      name: process.env.TERM || "xterm-256color",
-      cols: process.stdout.columns || 80,
-      rows: process.stdout.rows || 24,
-      cwd: process.cwd(),
-      env: { ...process.env },
-    });
+  // ── shared mutable state ─────────────────────────────────────────────────
+  // Declared outside the Promise so the daemon (started before the Promise
+  // body runs) can close over them.  All references resolve at call time —
+  // pty / dataSub are assigned later, but the daemon only reads them when
+  // it actually adjudicates an incident, by which point spawn has happened.
+  let pty;          // node-pty handle, assigned after ptySpawn
+  let dataSub;      // pty.onData subscription, assigned after binding
+  let forwardingActive = false;
+  let handlingApproval = false; // re-entrancy guard for the PTY data handler
+  let lockHeld = false;
+  let lockPoisoned = false;
 
-    // ── stdin forwarding ──────────────────────────────────────────────────
-    // We toggle raw mode + forwarding on/off around the approval prompt so
-    // readline can function properly while prompting.
+  // ── stdin forwarding ─────────────────────────────────────────────────────
+  // We toggle raw mode + forwarding on/off around the approval prompt so
+  // readline can function properly while prompting.
 
-    let forwardingActive = false;
-
-    function enableForwarding() {
-      if (forwardingActive) return;
-      forwardingActive = true;
-      if (process.stdin.isTTY && process.stdin.setRawMode) {
-        try {
-          process.stdin.setRawMode(true);
-        } catch {}
-      }
-      process.stdin.resume();
-    }
-
-    function disableForwarding() {
-      if (!forwardingActive) return;
-      forwardingActive = false;
-      if (process.stdin.setRawMode) {
-        try {
-          process.stdin.setRawMode(false);
-        } catch {}
-      }
-    }
-
-    function stdinHandler(data) {
-      if (forwardingActive) {
-        pty.write(data.toString());
-      }
-    }
-
-    process.stdin.on("data", stdinHandler);
-    enableForwarding();
-
-    // ── terminal resize ───────────────────────────────────────────────────
-    function onResize() {
+  function enableForwarding() {
+    if (forwardingActive) return;
+    forwardingActive = true;
+    if (process.stdin.isTTY && process.stdin.setRawMode) {
       try {
-        pty.resize(process.stdout.columns || 80, process.stdout.rows || 24);
+        process.stdin.setRawMode(true);
       } catch {}
     }
-    process.stdout.on("resize", onResize);
+    process.stdin.resume();
+  }
 
-    // ── cleanup ───────────────────────────────────────────────────────────
-    function cleanup() {
-      process.stdout.off("resize", onResize);
-      process.stdin.off("data", stdinHandler);
-      disableForwarding();
+  function disableForwarding() {
+    if (!forwardingActive) return;
+    forwardingActive = false;
+    if (process.stdin.setRawMode) {
+      try {
+        process.stdin.setRawMode(false);
+      } catch {}
     }
+  }
 
-    // ── Shared PTY runtime ────────────────────────────────────────────────
-    // Both correlation and single-event paths use the same callbacks.
-    const ptyRuntime = {
-      canPrompt: process.stdin.isTTY !== false,
+  function stdinHandler(data) {
+    if (forwardingActive) {
+      pty.write(data.toString());
+    }
+  }
+
+  // ── TTY lock ─────────────────────────────────────────────────────────────
+  // Acquired before any approval prompt, released after.  Shared between
+  // the PTY scanner (Layer 1) and the shell daemon (Layer 1.5) so two
+  // adjudications never overlap on the same TTY.
+  //
+  // Poisoned after onTerminate so post-mortem releases don't try to
+  // re-resume a dying PTY or re-enable raw mode after cleanup.
+  const ttyLock = {
+    get canPrompt() { return process.stdin.isTTY !== false; },
+    acquire: async () => {
+      if (lockPoisoned || lockHeld) return;
+      lockHeld = true;
+      handlingApproval = true;
+      disableForwarding();
+      try { pty.pause(); } catch {}
+      // Yield once so any in-flight PTY data finishes draining before the
+      // prompt UI takes over the terminal.
+      await new Promise((r) => setImmediate(r));
+    },
+    release: () => {
+      if (lockPoisoned || !lockHeld) return;
+      lockHeld = false;
+      try { pty.resume(); } catch {}
+      enableForwarding();
+      handlingApproval = false;
+    },
+    poison: () => { lockPoisoned = true; },
+  };
+
+  // ── resolve shell wrapper + start daemon ─────────────────────────────────
+  // The daemon listens on a per-session Unix socket.  We start it BEFORE
+  // spawning the agent so the wrapper can connect immediately on first
+  // use.  Even if the wrapper binary isn't installed, we still start the
+  // daemon — it owns the adjudication mutex that the PTY scanner uses.
+
+  const wrapperPath = resolveWrapperPath();
+  const socketPath = path.join(os.tmpdir(), `agentguard-${sessionId}.sock`);
+  const daemon = await startShellDaemon({
+    socketPath, config, stashRef, agent, stats, ttyLock,
+  });
+
+  return new Promise((resolve) => {
+
+    // ── PTY incident runtime ─────────────────────────────────────────────
+    // Used by the PTY scanner (Layer 1) when it routes through
+    // daemon.adjudicate().  onResume is a no-op because ttyLock.release
+    // handles the resume in adjudicate's `finally`; onTerminate poisons
+    // the lock so subsequent releases are no-ops while the PTY is being
+    // killed asynchronously.
+    const ptyIncidentRuntime = {
+      get canPrompt() { return process.stdin.isTTY !== false; },
       onRestore: () => {
-        console.error(chalk.yellow("[AgentGuard] Restoring snapshot\u2026"));
+        console.error(chalk.yellow("[AgentGuard] Restoring snapshot…"));
         const snap = restoreSnapshot(stashRef);
         console.error(
           snap.restored
@@ -194,16 +266,20 @@ export async function runPtyInterceptor({
         logSnapshotRestore(snap, agent);
       },
       onTerminate: () => {
+        // Poison FIRST so any concurrent ttyLock.release() (from another
+        // queued adjudication) becomes a no-op while we tear down.
+        ttyLock.poison();
+
         // Detach the onData handler first so no buffered PTY bytes reach
         // process.stdout after the deny decision — prevents a garbage flood
         // during the escalation window.
-        try { dataSub.dispose(); } catch {}
+        try { dataSub?.dispose(); } catch {}
         console.error(chalk.red("\n[AgentGuard] Operation blocked."));
         cleanup();
         logSessionEnd(agent);
         const pid = pty.pid;
-        const pgid = -pid;  // negative pid = signal the whole process group
-        try { pty.kill(); } catch {}  // SIGHUP (node-pty default)
+        const pgid = -pid; // negative pid = signal the whole process group
+        try { pty.kill(); } catch {} // SIGHUP (node-pty default)
 
         // Full terminal reset (RIS — Reset to Initial State). Corrects
         // arbitrary corruption left by TUI agents (alt-screen, character
@@ -220,22 +296,67 @@ export async function runPtyInterceptor({
           try { process.kill(pid, 0); process.kill(pgid, "SIGTERM"); } catch {}
           await new Promise((r) => setTimeout(r, 500));
           try { process.kill(pid, 0); process.kill(pgid, "SIGKILL"); } catch {}
-
+          if (daemon) { try { await daemon.stop(); } catch {} }
           resolve(1);
         })();
       },
       onResume: () => {
-        try { pty.resume(); } catch {}
-        enableForwarding();
-        handlingApproval = false;
+        // No-op: ttyLock.release in adjudicate's finally handles resume.
       },
     };
 
+    // ── spawn PTY ─────────────────────────────────────────────────────────
+    // Inject SHELL + session env so the agent's child shells route through
+    // the wrapper.  If no wrapper was found, leave SHELL alone and warn —
+    // Layer 1.5 is disabled but the session continues.
+    const resolvedAgent = resolveBin(agent);
+
+    const env = { ...process.env };
+    if (wrapperPath) {
+      env.SHELL = wrapperPath;
+      env.AGENTGUARD_SOCKET = socketPath;
+      env.AGENTGUARD_SESSION_ID = sessionId;
+      console.error(
+        chalk.gray(`[AgentGuard] Shell wrapper: ${wrapperPath}`)
+      );
+    } else {
+      console.error(
+        chalk.yellow(
+          "[AgentGuard] Shell wrapper not found at shell-wrapper/agentguard-shell{,.sh} — " +
+            "command interception falls back to PTY output scanning only."
+        )
+      );
+    }
+
+    pty = ptySpawn(resolvedAgent, agentArgs, {
+      name: process.env.TERM || "xterm-256color",
+      cols: process.stdout.columns || 80,
+      rows: process.stdout.rows || 24,
+      cwd: process.cwd(),
+      env,
+    });
+
+    // ── stdin / resize wiring ─────────────────────────────────────────────
+    process.stdin.on("data", stdinHandler);
+    enableForwarding();
+
+    function onResize() {
+      try {
+        pty.resize(process.stdout.columns || 80, process.stdout.rows || 24);
+      } catch {}
+    }
+    process.stdout.on("resize", onResize);
+
+    function cleanup() {
+      process.stdout.off("resize", onResize);
+      process.stdin.off("data", stdinHandler);
+      disableForwarding();
+    }
+
     // ── PTY output handler ────────────────────────────────────────────────
     let lineBuf = "";
-    let handlingApproval = false; // prevent re-entrant prompts
 
-    const dataSub = pty.onData(async (data) => {
+    dataSub = pty.onData(async (data) => {
       if (handlingApproval) return; // buffer scanning paused during prompt
 
       // Always forward raw PTY bytes to the user's terminal.
@@ -246,7 +367,7 @@ export async function runPtyInterceptor({
       lineBuf = lines.pop(); // keep incomplete trailing fragment
 
       for (const line of lines) {
-        // ── Correlation layer ──────────────────────────────────────────────────
+        // ── Correlation layer ──────────────────────────────────────────────
         // Strip ANSI escape codes before decoding — PTY output contains them raw.
         const event = decodeCommand(line.replace(ANSI_RE, "").trim());
         if (event) {
@@ -264,28 +385,13 @@ export async function runPtyInterceptor({
               ruleId: rule.id,
             };
 
-            handlingApproval = true;
-            disableForwarding();
-            try { pty.pause(); } catch {}
-            await new Promise(r => setImmediate(r));
-
-            const { outcome } = await handleIncident({
-              incident,
-              config, stashRef, agent, stats,
-              runtime: ptyRuntime,
-            });
-
+            const { outcome } = await daemon.adjudicate(incident, ptyIncidentRuntime);
             if (outcome === "denied") return; // PTY killed, stop processing this chunk
-            if (outcome === "deferred") {
-              try { pty.resume(); } catch {}
-              enableForwarding();
-              handlingApproval = false;
-            }
-            // approved: ptyRuntime.onResume already handled resume + flag reset
+            // approved or deferred: ttyLock release already ran in adjudicate's finally.
           }
         }
 
-        // ── Single-event classify / approval flow ──────────────────────────────
+        // ── Single-event classify / approval flow ──────────────────────────
         const cmd = extractCommand(line);
         if (!cmd) continue;
 
@@ -293,7 +399,8 @@ export async function runPtyInterceptor({
         const result = classify(cmd);
 
         if (requiresApproval(result)) {
-          // Telegram alert fires before pausing — don't await so prompt isn't blocked
+          // Telegram alert fires before adjudication — don't await so
+          // the prompt isn't blocked on network latency.
           if (isNotifierConfigured(config)) {
             sendTelegramAlert(
               { command: cmd, level: result.level, reason: result.reason, sessionId, agent },
@@ -303,30 +410,17 @@ export async function runPtyInterceptor({
 
           const contextResult = scoreWithContext(cmd);
 
-          handlingApproval = true;
-          disableForwarding();
-          try { pty.pause(); } catch {}
-          await new Promise(r => setImmediate(r));
+          const incident = {
+            source: "command",
+            level: result.level,
+            reason: result.reason,
+            command: cmd,
+            contextNotes: contextResult.contextNotes,
+          };
 
-          const { outcome } = await handleIncident({
-            incident: {
-              source: "command",
-              level: result.level,
-              reason: result.reason,
-              command: cmd,
-              contextNotes: contextResult.contextNotes,
-            },
-            config, stashRef, agent, stats,
-            runtime: ptyRuntime,
-          });
-
+          const { outcome } = await daemon.adjudicate(incident, ptyIncidentRuntime);
           if (outcome === "denied") return;
-          if (outcome === "deferred") {
-            try { pty.resume(); } catch {}
-            enableForwarding();
-            handlingApproval = false;
-          }
-          // approved: ptyRuntime.onResume already handled resume + flag reset
+          // approved or deferred: ttyLock release already ran in adjudicate's finally.
         }
       }
     });
@@ -334,8 +428,11 @@ export async function runPtyInterceptor({
     // ── exit ──────────────────────────────────────────────────────────────
     pty.onExit(({ exitCode }) => {
       cleanup();
-      logSessionEnd(agent);
-      resolve(exitCode ?? 0);
+      (async () => {
+        if (daemon) { try { await daemon.stop(); } catch {} }
+        logSessionEnd(agent);
+        resolve(exitCode ?? 0);
+      })();
     });
   });
 }
