@@ -331,11 +331,18 @@ jq 'select(.event == "snapshot_restore")' ~/.agentguard/audit.log
 
 AgentGuard is in early beta. These are known, honest gaps:
 
-**Command interception depends on output patterns, not actual execution.** AgentGuard detects commands by reading the agent's terminal output. Agents like Claude Code and Codex render tool calls in their own UI format (e.g. `⏺ Bash(...)`) which does not match the shell-prompt patterns AgentGuard looks for. As a result, command interception is currently unreliable for these agents.
+**Command interception varies by agent architecture.**
 
-The file watcher (Layer 2) is the primary defense for Claude Code and Codex sessions — it detects filesystem changes regardless of how the agent executed them.
+AgentGuard uses three layers of defense. Their effectiveness depends on the agent:
 
-A SHELL wrapper (intercepting `/bin/sh` directly) is planned to fix this gap properly.
+| Layer | Claude Code | Codex | Copilot CLI |
+|-------|-------------|-------|-------------|
+| Command interceptor (PTY) | Partial — catches narrated commands | No — Rust binary | No — TUI bypasses PTY |
+| Node runtime hook (--require) | Pending verification | No — Rust binary, not Node | Unknown |
+| File watcher | ✓ Works | ✓ Works | ✓ Works |
+| Post-Action Review + rollback | ✓ Works | ✓ Works | ✓ Works |
+
+The file watcher and Post-Action Review are the primary and most reliable defenses across all agents. Command interception in real time is best-effort and agent-dependent.
 
 **No kernel-level visibility.** AgentGuard does not monitor OS-level events (`execve`, `unlink`, `openat`, `connect`). It infers behavior from visible terminal output and filesystem changes, not from what actually executed at the OS level.
 
@@ -479,11 +486,17 @@ Runtime: `chalk`, `chokidar`, `node-pty`, `express`. Dev: `jest`.
 
 **Not yet implemented:**
 - [ ] Intent context — compare agent actions against your original prompt; alert when the agent touches something outside declared scope
-- [ ] Allowlists and scoped path exceptions — allow writes to specific directories without disabling rules
 - [ ] Signed / remote audit — hash-chained entries, optional log forwarding for compliance
 - [ ] Optional Linux eBPF backend — kernel-level telemetry for silent commands
 - [ ] Verified multi-agent testing — Codex CLI, aider, Continue need real sessions
 - [ ] Demo video / GIF
+- [ ] Persistent background daemon — file watcher runs permanently as a system service (launchd on macOS), monitoring configured directories without requiring an active agentguard session. Sends Telegram alerts on sensitive file changes. No interactive prompts — observe and alert only.
+- [ ] IDE plugin — VS Code and IntelliJ extensions that provide file watcher coverage for agent sessions running inside the IDE, where the CLI wrapper is not available.
+- [ ] Telegram approve/deny — respond to file change alerts directly from Telegram with inline buttons to keep or rollback the change. Closes the loop for remote agent supervision.
+- [ ] npm publish — install via `npm install -g agentguard` without cloning the repo. Current `npm link` requirement is a barrier for new users.
+- [ ] Allowlists and scoped path exceptions — allow writes to specific directories without disabling rules entirely. Example: always allow changes to `src/generated/` or `dist/`.
+- [ ] Team plan — centralized policy server where an admin defines rules and all team members run under them. Shared audit log and dashboard for managers. Use cases: compliance, onboarding, scope drift in monorepos.
+- [ ] Token and cost tracking — capture token usage reported by agents at session end, aggregate by developer and project, report actual AI costs. Useful for CTOs and finance teams managing AI spend at scale.
 
 ---
 
