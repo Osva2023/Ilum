@@ -103,6 +103,61 @@ export function startFileWatcher({
   async function handleChange(event, filePath) {
     const rel = path.relative(cwd, filePath);
 
+    // ── Sensitive-file detection ──────────────────────────────────────────────
+    // Runs BEFORE the correlation pipeline below.  The Telegram alert is
+    // fire-and-forget, so placing it first guarantees the alert leaves the
+    // process immediately on detection — regardless of whether a correlation
+    // rule further down awaits an interactive prompt.  fileChanges + stats
+    // updates are sync and order-independent.
+    const sensitive = isSensitive(rel);
+    const level = sensitive ? riskLevel(rel) : "SAFE";
+
+    fileChanges.push({ event, file: rel, level, time: new Date().toISOString() });
+
+    if (stats) stats.fileChanges = (stats.fileChanges || 0) + 1;
+
+    if (sensitive) {
+      if (stats) stats.intercepted = (stats.intercepted || 0) + 1;
+
+      const now = Date.now();
+      const last = recentSensitive.get(rel);
+      const onCooldown = last && now - last < SENSITIVE_COOLDOWN_MS;
+
+      if (!onCooldown) {
+        recentSensitive.set(rel, now);
+        logIntercepted({ command: `${event}: ${rel}`, level, reason: "Sensitive file modified by agent", agent });
+        console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel}`));
+
+        // Register a pending change and fire a Telegram alert with inline
+        // Keep / Rollback buttons.  Fire-and-forget so the watcher never
+        // blocks on network latency.  Gated on isNotifierConfigured to
+        // mirror the pty-interceptor.js pattern and avoid pending-entry
+        // leaks when Telegram is unconfigured (no listener to consume them).
+        if (isNotifierConfigured(config)) {
+          const changeId = pending.register({
+            sessionId,
+            path: rel,
+            event,
+            level,
+            stashRef,
+            sensitiveBackupDir,
+          });
+          sendFileChangeAlert(
+            { file: rel, level, event, sessionId, changeId, agent },
+            config
+          )
+            .then(({ text, refs }) => {
+              pending.updateMessageRefs(changeId, refs);
+              pending.updateMessageText(changeId, text);
+            })
+            .catch(() => {});
+        }
+      }
+    } else {
+      // Non-sensitive change — log quietly
+      console.error(chalk.gray(`[AgentGuard] 📝 ${event}: ${rel}`));
+    }
+
     // ── Rule-engine pipeline (correlation layer) ──────────────────────────────
     // handleChange receives internal labels ("created"/"modified"/"deleted");
     // decodeFileEvent expects the raw chokidar event names ("add"/"change"/"unlink").
@@ -166,55 +221,6 @@ export function startFileWatcher({
       // outcome === "denied":   onTerminate called process.exit(1).
     }
 
-    // ── Existing sensitive-file detection (unchanged) ─────────────────────────
-    const sensitive = isSensitive(rel);
-    const level = sensitive ? riskLevel(rel) : "SAFE";
-
-    fileChanges.push({ event, file: rel, level, time: new Date().toISOString() });
-
-    if (stats) stats.fileChanges = (stats.fileChanges || 0) + 1;
-
-    if (sensitive) {
-      if (stats) stats.intercepted = (stats.intercepted || 0) + 1;
-
-      const now = Date.now();
-      const last = recentSensitive.get(rel);
-      const onCooldown = last && now - last < SENSITIVE_COOLDOWN_MS;
-
-      if (!onCooldown) {
-        recentSensitive.set(rel, now);
-        logIntercepted({ command: `${event}: ${rel}`, level, reason: "Sensitive file modified by agent", agent });
-        console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel}`));
-
-        // Register a pending change and fire a Telegram alert with inline
-        // Keep / Rollback buttons.  Fire-and-forget so the watcher never
-        // blocks on network latency.  Gated on isNotifierConfigured to
-        // mirror the pty-interceptor.js pattern and avoid pending-entry
-        // leaks when Telegram is unconfigured (no listener to consume them).
-        if (isNotifierConfigured(config)) {
-          const changeId = pending.register({
-            sessionId,
-            path: rel,
-            event,
-            level,
-            stashRef,
-            sensitiveBackupDir,
-          });
-          sendFileChangeAlert(
-            { file: rel, level, event, sessionId, changeId, agent },
-            config
-          )
-            .then(({ text, refs }) => {
-              pending.updateMessageRefs(changeId, refs);
-              pending.updateMessageText(changeId, text);
-            })
-            .catch(() => {});
-        }
-      }
-    } else {
-      // Non-sensitive change — log quietly
-      console.error(chalk.gray(`[AgentGuard] 📝 ${event}: ${rel}`));
-    }
   }
 
   watcher
