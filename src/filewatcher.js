@@ -25,6 +25,8 @@ import { filterFired, suppression } from "./suppression.js";
 import { handleIncident } from "./enforcement.js";
 import { restoreSnapshot } from "./snapshot.js";
 import { isSensitive } from "./sensitive.js";
+import { isNotifierConfigured, sendFileChangeAlert } from "./notifier.js";
+import { pending } from "./pending-changes.js";
 
 // ─── Sensitive file patterns ─────────────────────────────────────────────────
 // Patterns and isSensitive() live in ./sensitive.js so snapshot.js can reuse
@@ -64,14 +66,24 @@ const recentSensitive = new Map();
  * interactively when a TTY is available; WARN is deferred when no TTY.
  *
  * @param {Object} opts
- * @param {string}   opts.cwd        - Directory to watch
- * @param {string}   opts.agent      - Agent name (for logging)
- * @param {string}   [opts.stashRef] - Snapshot ref for restore-on-deny
- * @param {Object}   [opts.config]   - Merged AgentGuard config object
- * @param {Object}   [opts.stats]    - Shared stats object (mutated in place)
+ * @param {string}   opts.cwd                       - Directory to watch
+ * @param {string}   opts.agent                     - Agent name (for logging)
+ * @param {string}   [opts.sessionId]               - Current AgentGuard session id
+ * @param {string}   [opts.stashRef]                - Snapshot ref for restore-on-deny
+ * @param {string}   [opts.sensitiveBackupDir]      - Per-session backup dir for sensitive files
+ * @param {Object}   [opts.config]                  - Merged AgentGuard config object
+ * @param {Object}   [opts.stats]                   - Shared stats object (mutated in place)
  * @returns {{ stop: Function, fileChanges: Array }}
  */
-export function startFileWatcher({ cwd, agent, stashRef, config, stats }) {
+export function startFileWatcher({
+  cwd,
+  agent,
+  sessionId,
+  stashRef,
+  sensitiveBackupDir,
+  config,
+  stats,
+}) {
   const fileChanges = [];
   let handlingCorrelation = false; // prevent re-entrant enforcement
 
@@ -173,6 +185,31 @@ export function startFileWatcher({ cwd, agent, stashRef, config, stats }) {
         recentSensitive.set(rel, now);
         logIntercepted({ command: `${event}: ${rel}`, level, reason: "Sensitive file modified by agent", agent });
         console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel}`));
+
+        // Register a pending change and fire a Telegram alert with inline
+        // Keep / Rollback buttons.  Fire-and-forget so the watcher never
+        // blocks on network latency.  Gated on isNotifierConfigured to
+        // mirror the pty-interceptor.js pattern and avoid pending-entry
+        // leaks when Telegram is unconfigured (no listener to consume them).
+        if (isNotifierConfigured(config)) {
+          const changeId = pending.register({
+            sessionId,
+            path: rel,
+            event,
+            level,
+            stashRef,
+            sensitiveBackupDir,
+          });
+          sendFileChangeAlert(
+            { file: rel, level, event, sessionId, changeId, agent },
+            config
+          )
+            .then(({ text, refs }) => {
+              pending.updateMessageRefs(changeId, refs);
+              pending.updateMessageText(changeId, text);
+            })
+            .catch(() => {});
+        }
       }
     } else {
       // Non-sensitive change — log quietly

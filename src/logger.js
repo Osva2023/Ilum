@@ -189,4 +189,24 @@ export function logSnapshotRestore(snap, agent) {
   });
 }
 
+/**
+ * Log the result of a per-file restore triggered by a Telegram "Rollback"
+ * action.  Distinct from snapshot_restore (which is session-wide).
+ *
+ * @param {{ restored: boolean, mode: string, message: string }} result  Return value of restoreFile()
+ * @param {{ file: string, by?: string }} ctx
+ * @param {string} [agent]
+ */
+export function logFileRestore(result, ctx, agent) {
+  log({
+    event: "file_restore",
+    restored: result.restored,
+    mode: result.mode,
+    message: result.message,
+    file: ctx.file,
+    ...(ctx.by !== undefined && { by: ctx.by }),
+    agent,
+  });
+}
+
 export { LOG_FILE, AGENTGUARD_DIR };

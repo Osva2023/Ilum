@@ -20,11 +20,12 @@
 import chalk from "chalk";
 import { createSnapshot } from "../src/snapshot.js";
 import { runInterceptor } from "../src/interceptor.js";
-import { logSessionStart, LOG_FILE } from "../src/logger.js";
+import { logSessionStart, LOG_FILE, sessionId } from "../src/logger.js";
 import { loadConfig } from "../src/config.js";
 import { printSessionSummary } from "../src/summary.js";
 import { startFileWatcher } from "../src/filewatcher.js";
 import { showPostActionReview } from "../src/reviewer.js";
+import { startListener, cleanupPendingAlerts } from "../src/telegram-listener.js";
 
 // ─── parse args ───────────────────────────────────────────────────────────────
 
@@ -117,6 +118,18 @@ if (config.snapshot.enabled !== false) {
 
 console.error(""); // blank line before agent output begins
 
+// ─── telegram listener ───────────────────────────────────────────────────────
+
+// Long-polls Telegram for callback_query updates from the inline Keep /
+// Rollback buttons on file-change alerts.  No-op when Telegram is not
+// configured (returns a stub stop()).
+const listener = startListener({
+  config,
+  sessionId,
+  cwd: process.cwd(),
+  agent,
+});
+
 // ─── choose interceptor ───────────────────────────────────────────────────────
 
 // Use the PTY interceptor when:
@@ -174,7 +187,9 @@ if (!runSession) {
 const watcher = startFileWatcher({
   cwd: process.cwd(),
   agent,
+  sessionId,
   stashRef: snap.stashRef,
+  sensitiveBackupDir: snap.sensitiveBackupDir,
   config,
   stats,
 });
@@ -185,6 +200,8 @@ try {
   const exitCode = await runSession();
 
   watcher.stop();
+  listener.stop();
+  await cleanupPendingAlerts(config);
 
   // Add file change count to summary
   if (watcher.fileChanges.length > 0) {
@@ -205,6 +222,8 @@ try {
   process.exit(exitCode);
 } catch (err) {
   watcher.stop();
+  listener.stop();
+  await cleanupPendingAlerts(config);
   console.error(chalk.red(`[AgentGuard] Fatal error: ${err.message}`));
   printSessionSummary({ agent, startTime, stats, snapshot: snap, auditOnly: config.auditOnly });
   process.exit(1);

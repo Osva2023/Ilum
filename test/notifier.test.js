@@ -11,7 +11,12 @@
  */
 
 import assert from "assert";
-import { isNotifierConfigured, sendTelegramAlert } from "../src/notifier.js";
+import {
+  isNotifierConfigured,
+  sendTelegramAlert,
+  sendFileChangeAlert,
+  editAlertResolved,
+} from "../src/notifier.js";
 
 let passed = 0;
 let failed = 0;
@@ -216,6 +221,291 @@ await testAsync(
         }
       );
       assert.strictEqual(fetchCalled, false, "fetch must not be called when no credentials");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+);
+
+// ─── sendFileChangeAlert ──────────────────────────────────────────────────────
+
+await testAsync(
+  "sendFileChangeAlert() embeds inline_keyboard with correct callback_data",
+  async () => {
+    let capturedBody;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return { ok: true, json: async () => ({ result: { message_id: 42 } }) };
+    };
+    try {
+      const config = {
+        notifications: {
+          telegram: { enabled: true, botToken: "t", chatId: "c" },
+        },
+      };
+      await sendFileChangeAlert(
+        {
+          file: "src/.env",
+          level: "HIGH",
+          event: "modified",
+          sessionId: "abc12345def",
+          changeId: "deadbeef",
+          agent: "claude",
+        },
+        config
+      );
+      const kb = capturedBody.reply_markup.inline_keyboard;
+      assert.strictEqual(kb.length, 1);
+      assert.strictEqual(kb[0].length, 2);
+      assert.strictEqual(kb[0][0].callback_data, "k:deadbeef");
+      assert.strictEqual(kb[0][1].callback_data, "r:deadbeef");
+      assert.ok(kb[0][0].text.includes("Keep"));
+      assert.ok(kb[0][1].text.includes("Rollback"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+);
+
+await testAsync(
+  "sendFileChangeAlert() body contains file, level, event, short session",
+  async () => {
+    let capturedBody;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return { ok: true, json: async () => ({ result: { message_id: 1 } }) };
+    };
+    try {
+      const config = {
+        notifications: {
+          telegram: { enabled: true, botToken: "t", chatId: "c" },
+        },
+      };
+      await sendFileChangeAlert(
+        {
+          file: "secrets/.env",
+          level: "CRITICAL",
+          event: "modified",
+          sessionId: "abc12345def",
+          changeId: "x",
+          agent: "claude",
+        },
+        config
+      );
+      const msg = capturedBody.text;
+      assert.ok(msg.includes("secrets/.env"), "has file path");
+      assert.ok(msg.includes("CRITICAL"), "has level");
+      assert.ok(msg.includes("modified"), "has event");
+      assert.ok(msg.includes("abc12345"), "has short session id");
+      assert.ok(msg.includes("claude"), "has agent name");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+);
+
+await testAsync(
+  "sendFileChangeAlert() returns text + refs for successful sends",
+  async () => {
+    let counter = 100;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      json: async () => ({ result: { message_id: counter++ } }),
+    });
+    try {
+      const config = {
+        notifications: {
+          telegram: {
+            enabled: true,
+            botToken: "t",
+            chatId: "primary",
+            extraChatIds: ["extra1", "extra2"],
+          },
+        },
+      };
+      const out = await sendFileChangeAlert(
+        {
+          file: "x", level: "HIGH", event: "modified",
+          sessionId: "s", changeId: "c", agent: "a",
+        },
+        config
+      );
+      assert.ok(typeof out.text === "string" && out.text.length > 0);
+      assert.deepStrictEqual(out.refs, [
+        { chatId: "primary", messageId: 100 },
+        { chatId: "extra1",  messageId: 101 },
+        { chatId: "extra2",  messageId: 102 },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+);
+
+await testAsync(
+  "sendFileChangeAlert() returns {text:'', refs:[]} when not configured",
+  async () => {
+    let called = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => { called = true; return { ok: true }; };
+    try {
+      await withEnv(
+        {
+          AGENTGUARD_TELEGRAM_BOT_TOKEN: undefined,
+          AGENTGUARD_TELEGRAM_CHAT_ID: undefined,
+        },
+        async () => {
+          const out = await sendFileChangeAlert(
+            { file: "x", level: "HIGH", event: "modified",
+              sessionId: "s", changeId: "c", agent: "a" },
+            {}
+          );
+          assert.deepStrictEqual(out, { text: "", refs: [] });
+        }
+      );
+      assert.strictEqual(called, false, "fetch must not be called");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+);
+
+await testAsync(
+  "sendFileChangeAlert() per-chat failure does not abort other chats",
+  async () => {
+    let n = 0;
+    const originalFetch = globalThis.fetch;
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = () => true;
+    globalThis.fetch = async (_url, opts) => {
+      n++;
+      const body = JSON.parse(opts.body);
+      if (body.chat_id === "fails") {
+        return { ok: false, status: 400, text: async () => "bad chat" };
+      }
+      return { ok: true, json: async () => ({ result: { message_id: 7 } }) };
+    };
+    try {
+      const config = {
+        notifications: {
+          telegram: {
+            enabled: true,
+            botToken: "t",
+            chatId: "primary",
+            extraChatIds: ["fails", "ok2"],
+          },
+        },
+      };
+      const out = await sendFileChangeAlert(
+        { file: "x", level: "HIGH", event: "modified",
+          sessionId: "s", changeId: "c", agent: "a" },
+        config
+      );
+      assert.strictEqual(n, 3, "all 3 chats attempted");
+      assert.deepStrictEqual(
+        out.refs.map((r) => r.chatId).sort(),
+        ["ok2", "primary"]
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      process.stderr.write = originalWrite;
+    }
+  }
+);
+
+// ─── editAlertResolved ────────────────────────────────────────────────────────
+
+await testAsync(
+  "editAlertResolved() POSTs editMessageText with appended resolution and empty keyboard",
+  async () => {
+    let capturedUrl, capturedBody;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      capturedUrl = url;
+      capturedBody = JSON.parse(opts.body);
+      return { ok: true };
+    };
+    try {
+      const ok = await editAlertResolved({
+        token: "tok",
+        chatId: "c1",
+        messageId: 42,
+        originalText: "📁 AgentGuard File Alert\n\nFile: x",
+        outcome: "rolled_back",
+        by: "morphius101",
+      });
+      assert.strictEqual(ok, true);
+      assert.ok(capturedUrl.endsWith("/editMessageText"));
+      assert.strictEqual(capturedBody.chat_id, "c1");
+      assert.strictEqual(capturedBody.message_id, 42);
+      assert.ok(capturedBody.text.startsWith("📁 AgentGuard File Alert"));
+      assert.ok(capturedBody.text.includes("↩️ Rolled back by @morphius101"));
+      assert.deepStrictEqual(capturedBody.reply_markup, { inline_keyboard: [] });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+);
+
+await testAsync(
+  "editAlertResolved() — resolution-line strings for each outcome",
+  async () => {
+    let capturedBody;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return { ok: true };
+    };
+    try {
+      await editAlertResolved({
+        token: "t", chatId: "c", messageId: 1,
+        originalText: "ORIG", outcome: "kept", by: "alice",
+      });
+      assert.ok(capturedBody.text.endsWith("✅ Kept by @alice"));
+
+      await editAlertResolved({
+        token: "t", chatId: "c", messageId: 1,
+        originalText: "ORIG", outcome: "kept", by: null,
+      });
+      assert.ok(capturedBody.text.endsWith("✅ Kept"));
+
+      await editAlertResolved({
+        token: "t", chatId: "c", messageId: 1,
+        originalText: "ORIG", outcome: "session_ended",
+      });
+      assert.ok(capturedBody.text.endsWith("⌛ Session ended — no action taken"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+);
+
+await testAsync(
+  "editAlertResolved() returns false on missing params",
+  async () => {
+    let called = false;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => { called = true; return { ok: true }; };
+    try {
+      const r1 = await editAlertResolved({
+        token: "", chatId: "c", messageId: 1,
+        originalText: "x", outcome: "kept",
+      });
+      const r2 = await editAlertResolved({
+        token: "t", chatId: "c", messageId: null,
+        originalText: "x", outcome: "kept",
+      });
+      const r3 = await editAlertResolved({
+        token: "t", chatId: "c", messageId: 1,
+        originalText: "x", outcome: "what?",
+      });
+      assert.strictEqual(r1, false);
+      assert.strictEqual(r2, false);
+      assert.strictEqual(r3, false);
+      assert.strictEqual(called, false);
     } finally {
       globalThis.fetch = originalFetch;
     }

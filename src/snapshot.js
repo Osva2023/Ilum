@@ -17,9 +17,10 @@ import { isSensitive } from "./sensitive.js";
  *
  * @returns {boolean}
  */
-function isGitRepo() {
+function isGitRepo(cwd) {
   try {
     execSync("git rev-parse --is-inside-work-tree", {
+      cwd,
       stdio: "ignore",
       timeout: 5000,
     });
@@ -27,6 +28,29 @@ function isGitRepo() {
   } catch {
     return false;
   }
+}
+
+/**
+ * Find the current `stash@{N}` index for a stash message ref.  Tolerates
+ * intervening user stashes (which shift indices) by searching the list
+ * for our recorded message.
+ *
+ * @param {string} stashRef  The message used at stash time.
+ * @param {string} [cwd]
+ * @returns {string|null}     "stash@{N}" or null if not found.
+ */
+function findStashIndexByRef(stashRef, cwd) {
+  const listResult = spawnSync("git", ["stash", "list"], {
+    cwd,
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  if (listResult.status !== 0 || listResult.error) return null;
+  const lines = listResult.stdout.trim().split("\n");
+  const matchLine = lines.find((l) => l.includes(stashRef));
+  if (!matchLine) return null;
+  const m = matchLine.match(/stash@\{(\d+)\}/);
+  return m ? `stash@{${m[1]}}` : null;
 }
 
 // Directories never descended into when scanning for sensitive files.
@@ -167,33 +191,14 @@ export function restoreSnapshot(stashRef) {
     return { restored: false, message: "Not a git repository." };
   }
 
-  // Find the stash index that matches our ref message
-  const listResult = spawnSync("git", ["stash", "list"], {
-    encoding: "utf8",
-    timeout: 5000,
-  });
-
-  if (listResult.status !== 0 || listResult.error) {
-    return { restored: false, message: "Could not list stashes." };
-  }
-
-  const lines = listResult.stdout.trim().split("\n");
-  const matchLine = lines.find((l) => l.includes(stashRef));
-
-  if (!matchLine) {
+  const stashIndex = findStashIndexByRef(stashRef);
+  if (!stashIndex) {
     return {
       restored: false,
       message: `Snapshot stash not found for ref: ${stashRef}`,
     };
   }
 
-  // Extract stash index from "stash@{N}: ..."
-  const match = matchLine.match(/stash@\{(\d+)\}/);
-  if (!match) {
-    return { restored: false, message: "Could not parse stash index." };
-  }
-
-  const stashIndex = `stash@{${match[1]}}`;
   const popResult = spawnSync("git", ["stash", "pop", stashIndex], {
     encoding: "utf8",
     timeout: 15_000,
@@ -209,5 +214,114 @@ export function restoreSnapshot(stashRef) {
   return {
     restored: true,
     message: `Snapshot restored from stash "${stashRef}".`,
+  };
+}
+
+/**
+ * Restore a single file to its pre-session state without consuming the stash.
+ *
+ * Chain (first that succeeds wins):
+ *   1. event === "created"      → unlink the file (it didn't exist before)
+ *   2. git checkout stash@{N} -- <relPath>     (file tracked at snapshot time)
+ *   3. git checkout stash@{N}^3 -- <relPath>   (untracked at snapshot time —
+ *                                               ^3 is the untracked-files
+ *                                               parent created by `git stash -u`)
+ *   4. fs.copyFileSync from sensitiveBackupDir (catches .gitignore'd files
+ *                                               that git stash silently skips)
+ *
+ * Never pops or drops the stash — the same session may need to restore
+ * other files later.  The stash index is looked up dynamically by message
+ * so an intervening `git stash push` from the user does not break us.
+ *
+ * @param {Object} opts
+ * @param {string}      opts.relPath               Path relative to cwd
+ * @param {string}      opts.event                 "created" | "modified" | "deleted"
+ * @param {string|null} [opts.stashRef]            Stash message (from createSnapshot)
+ * @param {string|null} [opts.sensitiveBackupDir]  Per-session backup dir
+ * @param {string}      [opts.cwd]                 Defaults to process.cwd()
+ * @returns {{ restored: boolean, mode: string, message: string }}
+ *          mode ∈ "delete" | "stash-tracked" | "stash-untracked"
+ *                | "backup-copy" | "none"
+ */
+export function restoreFile({
+  relPath,
+  event,
+  stashRef,
+  sensitiveBackupDir,
+  cwd = process.cwd(),
+}) {
+  const absPath = path.resolve(cwd, relPath);
+
+  // ── 1. Created files → delete ─────────────────────────────────────────────
+  if (event === "created") {
+    try {
+      fs.unlinkSync(absPath);
+      return { restored: true, mode: "delete", message: `Deleted ${relPath}` };
+    } catch (err) {
+      if (err.code === "ENOENT") {
+        return { restored: true, mode: "delete", message: `${relPath} already absent` };
+      }
+      return { restored: false, mode: "delete", message: `Delete failed: ${err.message}` };
+    }
+  }
+
+  // ── 2/3. Git stash restore ────────────────────────────────────────────────
+  if (isGitRepo(cwd) && stashRef) {
+    const stashIndex = findStashIndexByRef(stashRef, cwd);
+    if (stashIndex) {
+      const tracked = spawnSync(
+        "git",
+        ["checkout", stashIndex, "--", relPath],
+        { cwd, encoding: "utf8", timeout: 15_000 }
+      );
+      if (tracked.status === 0) {
+        return {
+          restored: true,
+          mode: "stash-tracked",
+          message: `Restored ${relPath} from ${stashIndex}`,
+        };
+      }
+
+      const untracked = spawnSync(
+        "git",
+        ["checkout", `${stashIndex}^3`, "--", relPath],
+        { cwd, encoding: "utf8", timeout: 15_000 }
+      );
+      if (untracked.status === 0) {
+        return {
+          restored: true,
+          mode: "stash-untracked",
+          message: `Restored ${relPath} from ${stashIndex}^3`,
+        };
+      }
+    }
+  }
+
+  // ── 4. Backup-copy fallback ───────────────────────────────────────────────
+  if (sensitiveBackupDir) {
+    const src = path.join(sensitiveBackupDir, relPath);
+    if (fs.existsSync(src)) {
+      try {
+        fs.mkdirSync(path.dirname(absPath), { recursive: true });
+        fs.copyFileSync(src, absPath);
+        return {
+          restored: true,
+          mode: "backup-copy",
+          message: `Restored ${relPath} from backup`,
+        };
+      } catch (err) {
+        return {
+          restored: false,
+          mode: "backup-copy",
+          message: `Backup copy failed: ${err.message}`,
+        };
+      }
+    }
+  }
+
+  return {
+    restored: false,
+    mode: "none",
+    message: `No source available to restore ${relPath}`,
   };
 }

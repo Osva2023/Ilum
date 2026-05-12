@@ -38,6 +38,28 @@
 "use strict";
 
 (() => {
+  // ─── Startup diagnostic ───────────────────────────────────────────────────
+  // Append one JSON line to ~/.agentguard/hook-trace.log every time the hook
+  // is loaded.  Runs BEFORE the AGENTGUARD_SOCKET early-bail so we can tell
+  // "Codex never loaded the hook" from "hook loaded but no session env".
+  // Best-effort: any failure is swallowed — diagnostics must never break the
+  // agent.  Remove this block (and the comment) once the hook is verified
+  // working end-to-end.
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const os = require("os");
+    const dir = path.join(os.homedir(), ".agentguard");
+    fs.mkdirSync(dir, { recursive: true });
+    const line = JSON.stringify({
+      ts: new Date().toISOString(),
+      event: "hook_loaded",
+      pid: process.pid,
+      argv0: process.argv[0] ?? "",
+    }) + "\n";
+    fs.appendFileSync(path.join(dir, "hook-trace.log"), line, { mode: 0o600 });
+  } catch {}
+
   // Bail early if we're not under AgentGuard.  Hook becomes a no-op,
   // user code runs normally.
   if (!process.env.AGENTGUARD_SOCKET) return;

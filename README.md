@@ -264,7 +264,8 @@ Create `agentguard.config.json` in your project directory, or `~/.agentguard/con
     "telegram": {
       "enabled": false,
       "botToken": "",
-      "chatId": ""
+      "chatId": "",
+      "extraChatIds": []
     }
   }
 }
@@ -293,6 +294,36 @@ Set `"policy"` to apply a behavior preset. Any other fields you set override the
 | `ci` | `[]` | `["CRITICAL", "HIGH", "WARN"]` | CI pipelines — all risky commands fail the build immediately |
 
 Precedence: **defaults → pack → your config**. Your explicit settings always win.
+
+---
+
+## Telegram approval
+
+When Telegram is configured, every sensitive file change during a session sends an alert with two inline buttons:
+
+- **✅ Keep** — accept the change.
+- **↩️ Rollback** — restore the file from the session snapshot in-place.
+
+Enable in `agentguard.config.json`:
+
+```json
+"notifications": {
+  "telegram": {
+    "enabled": true,
+    "botToken": "123456:ABC-your-bot-token",
+    "chatId": "987654321",
+    "extraChatIds": []
+  }
+}
+```
+
+Or via env vars: `AGENTGUARD_TELEGRAM_BOT_TOKEN`, `AGENTGUARD_TELEGRAM_CHAT_ID`.
+
+**Rollback** is per-file (not session-wide). It tries `git checkout stash@{N} -- <path>` for tracked files, `stash@{N}^3` for untracked-in-stash files, then falls back to a copy from `~/.agentguard/snapshots/{sessionId}/<path>` for gitignored files like `.env`. The stash is never popped — multiple files can be rolled back independently. If no source succeeds, the buttons stay live for retry.
+
+**Authorization**: only Telegram user IDs in `chatId` + `extraChatIds` can press the buttons. Other presses are rejected.
+
+**Session end**: unresolved alerts are marked **⌛ Session ended — no action taken** and their buttons cleared automatically.
 
 ---
 
