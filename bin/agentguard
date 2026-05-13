@@ -48,6 +48,12 @@ ${chalk.bold("Examples:")}
   agentguard aider --model gpt-4
   agentguard --audit-only claude --print "clean up this project"
 
+${chalk.bold("Daemon (background file watcher):")}
+  agentguard daemon start    Start the daemon detached
+  agentguard daemon stop     Send SIGTERM to the running daemon
+  agentguard daemon status   Show PID, uptime, watched paths
+  agentguard daemon logs     Tail ~/.agentguard/daemon.log
+
 ${chalk.bold("What it does:")}
   • Creates a git snapshot of your working tree before the session starts
   • Wraps the agent process and monitors its output for dangerous commands
@@ -68,6 +74,25 @@ ${chalk.bold("Config (optional):")}
 if (agent === "dashboard") {
   const { startDashboard } = await import("../src/dashboard/server.js");
   await startDashboard();
+  process.exit(0);
+}
+
+// ─── daemon sub-command ──────────────────────────────────────────────────────
+
+if (agent === "daemon") {
+  const sub = agentArgs[0];
+  const mod = await import("../src/daemon-control.js");
+  const handlers = {
+    start:  mod.daemonStart,
+    stop:   mod.daemonStop,
+    status: mod.daemonStatus,
+    logs:   mod.daemonLogs,
+  };
+  if (!sub || !handlers[sub]) {
+    console.error("Usage: agentguard daemon <start|stop|status|logs>");
+    process.exit(1);
+  }
+  await handlers[sub]();
   process.exit(0);
 }
 
