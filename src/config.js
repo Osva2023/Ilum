@@ -89,6 +89,11 @@ export const DEFAULT_CONFIG = {
       chatId: "",
     },
   },
+  /**
+   * Directories to watch when running the daemon (bin/agentguard-daemon.js).
+   * Ignored by the interactive CLI.  Supports ~/ expansion.
+   */
+  watchPaths: [],
 };
 
 // ─── loader ──────────────────────────────────────────────────────────────────
@@ -168,5 +173,6 @@ export function mergeConfig(defaults, overrides) {
         ...(overrides.notifications?.telegram ?? {}),
       },
     },
+    watchPaths: overrides.watchPaths ?? [...defaults.watchPaths],
   };
 }
