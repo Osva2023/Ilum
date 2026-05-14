@@ -109,6 +109,18 @@ function readStartTime() {
   }
 }
 
+// ─── public helpers ──────────────────────────────────────────────────────────
+
+/**
+ * True when ~/.agentguard/daemon.pid points at a live process.
+ * Used by bin/agentguard to avoid Telegram getUpdates 409 conflicts when
+ * an interactive session starts while the daemon is already polling.
+ */
+export function isDaemonRunning() {
+  const pid = readPid();
+  return Boolean(pid && isAlive(pid));
+}
+
 // ─── start ───────────────────────────────────────────────────────────────────
 
 export async function daemonStart() {
