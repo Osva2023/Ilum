@@ -1,23 +1,35 @@
 {
   "name": "agentguard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Universal shell wrapper that intercepts dangerous commands from AI coding agents",
   "type": "module",
+  "main": "src/index.js",
   "bin": {
     "agentguard": "./bin/agentguard"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "shell-wrapper/main.go",
+    "shell-wrapper/build.sh",
+    "shell-wrapper/agentguard-shell.sh"
+  ],
   "scripts": {
     "start": "node bin/agentguard",
     "test": "node test/classifier.test.js && node test/notifier.test.js && node test/config.test.js && node test/event-bus.test.js && node --test test/decoder.test.js && node --test test/suppression.test.js && node --test test/correlator.test.js && node --test test/enforcement.test.js && node --test test/snapshot-restore.test.js && node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
     "test:classifier": "node test/classifier.test.js",
     "test:notifier": "node test/notifier.test.js",
     "test:jest": "node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
-    "dashboard": "node bin/agentguard dashboard"
+    "dashboard": "node bin/agentguard dashboard",
+    "postinstall": "cd shell-wrapper && ./build.sh || true",
+    "prepublishOnly": "npm test"
   },
   "dependencies": {
     "chalk": "^5.3.0",
-    "chokidar": "^5.0.0",
-    "express": "^4.22.1",
+    "chokidar": "^4.0.0",
+    "express": "^4.21.0"
+  },
+  "optionalDependencies": {
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
@@ -30,5 +42,23 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "license": "MIT"
+  "keywords": [
+    "ai",
+    "agents",
+    "claude-code",
+    "codex",
+    "security",
+    "guardrails",
+    "developer-tools"
+  ],
+  "author": "Osvaldo Muguercia",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Osva2023/AgentGuard"
+  },
+  "homepage": "https://github.com/Osva2023/AgentGuard#readme",
+  "bugs": {
+    "url": "https://github.com/Osva2023/AgentGuard/issues"
+  }
 }
