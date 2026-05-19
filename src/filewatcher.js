@@ -17,7 +17,7 @@
 import chokidar from "chokidar";
 import path from "path";
 import chalk from "chalk";
-import { logIntercepted, logSessionEnd, logSnapshotRestore } from "./logger.js";
+import { logDetected, logIntercepted, logSessionEnd, logSnapshotRestore } from "./logger.js";
 import { decodeFileEvent } from "./decoder.js";
 import { bus } from "./event-bus.js";
 import { evaluate } from "./correlator.js";
@@ -41,6 +41,31 @@ function riskLevel(filePath) {
   if (/^\.github\/workflows/.test(filePath)) return "HIGH";
   if (/^package(-lock)?\.json$/.test(basename)) return "WARN";
   return "WARN";
+}
+
+// ─── Telegram deferral check ─────────────────────────────────────────────────
+
+/**
+ * Return true when a fired correlation rule should defer its CLI prompt
+ * because an unresolved Telegram alert already covers one of the file
+ * events that drove the rule.  Exported as a pure function so it can be
+ * unit-tested without spinning up chokidar.
+ *
+ * @param {Object} args
+ * @param {Object} args.config
+ * @param {import("./correlation-rules.js").CorrelationRule} args.rule
+ * @param {import("./event-bus.js").EventBus} args.bus
+ * @param {import("./pending-changes.js").PendingChanges} args.pending
+ * @returns {boolean}
+ */
+export function shouldDeferToTelegram({ config, rule, bus, pending }) {
+  if (!isNotifierConfigured(config)) return false;
+  const since = new Date(Date.now() - (rule.windowMs ?? 60_000)).toISOString();
+  const busFiles = new Set([
+    ...bus.query({ type: "file_write", since }).map((e) => e.file),
+    ...bus.query({ type: "file_delete", since }).map((e) => e.file),
+  ]);
+  return pending.listUnresolved().some((entry) => busFiles.has(entry.path));
 }
 
 // ─── Per-file cooldown for sensitive-file notices ────────────────────────────
@@ -179,6 +204,18 @@ export function startFileWatcher({
         reason: rule.description,
         ruleId: rule.id,
       };
+
+      // When notifications are configured AND pending.listUnresolved() has an
+      // entry whose path appears in the file events that drove this rule, the
+      // user already has an actionable Keep / Rollback alert in Telegram —
+      // showing the CLI prompt too would double-handle the same event.  The
+      // incident is still recorded to the audit log with deferredTo:"telegram"
+      // so deferred correlations stay observable and distinguishable.
+      if (shouldDeferToTelegram({ config, rule, bus, pending })) {
+        console.error(chalk.gray("[AgentGuard] decision deferred to Telegram"));
+        logDetected(incident, agent, { deferredTo: "telegram" });
+        continue;
+      }
 
       handlingCorrelation = true;
 

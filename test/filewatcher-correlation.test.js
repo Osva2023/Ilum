@@ -22,7 +22,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { handleIncident } from "../src/enforcement.js";
-import { setSink } from "../src/logger.js";
+import { shouldDeferToTelegram } from "../src/filewatcher.js";
+import { EventBus } from "../src/event-bus.js";
+import { PendingChanges } from "../src/pending-changes.js";
+import { logDetected, setSink } from "../src/logger.js";
 
 // Redirect audit-log writes to /dev/null for the duration of this file.
 setSink(() => {});
@@ -344,5 +347,134 @@ describe("correlation — autoApprove (filewatch runtime)", () => {
       }),
     });
     assert.equal(terminated, false);
+  });
+});
+
+// ─── Telegram deferral — CLI prompt suppression ───────────────────────────────
+
+describe("shouldDeferToTelegram", () => {
+  const rule = { id: "env-overwrite", windowMs: 30_000 };
+
+  function telegramConfig() {
+    return { notifications: { telegram: { enabled: true, botToken: "t", chatId: "1" } } };
+  }
+
+  function pushFileWrite(bus, file) {
+    bus.push({
+      type: "file_write",
+      file,
+      raw: file,
+      subtype: "secret",
+      time: new Date().toISOString(),
+    });
+  }
+
+  it("returns false when notifications are not configured", () => {
+    const bus = new EventBus();
+    const pending = new PendingChanges();
+    pending.register({ sessionId: "s", path: ".env", event: "modified", level: "HIGH" });
+    pushFileWrite(bus, ".env");
+    assert.equal(shouldDeferToTelegram({ config: {}, rule, bus, pending }), false);
+  });
+
+  it("returns false when no pending entry exists", () => {
+    const bus = new EventBus();
+    const pending = new PendingChanges();
+    pushFileWrite(bus, ".env");
+    assert.equal(
+      shouldDeferToTelegram({ config: telegramConfig(), rule, bus, pending }),
+      false,
+    );
+  });
+
+  it("returns false when no pending path matches a bus file", () => {
+    const bus = new EventBus();
+    const pending = new PendingChanges();
+    pending.register({ sessionId: "s", path: ".env", event: "modified", level: "HIGH" });
+    pushFileWrite(bus, "src/other.js");
+    assert.equal(
+      shouldDeferToTelegram({ config: telegramConfig(), rule, bus, pending }),
+      false,
+    );
+  });
+
+  it("returns true when a pending entry matches a file_write in the bus", () => {
+    const bus = new EventBus();
+    const pending = new PendingChanges();
+    pending.register({ sessionId: "s", path: ".env", event: "modified", level: "HIGH" });
+    pushFileWrite(bus, ".env");
+    assert.equal(
+      shouldDeferToTelegram({ config: telegramConfig(), rule, bus, pending }),
+      true,
+    );
+  });
+
+  it("returns true when a pending entry matches a file_delete in the bus", () => {
+    const bus = new EventBus();
+    const pending = new PendingChanges();
+    pending.register({ sessionId: "s", path: "secrets.pem", event: "deleted", level: "CRITICAL" });
+    bus.push({
+      type: "file_delete",
+      file: "secrets.pem",
+      raw: "secrets.pem",
+      subtype: "secret",
+      time: new Date().toISOString(),
+    });
+    assert.equal(
+      shouldDeferToTelegram({ config: telegramConfig(), rule, bus, pending }),
+      true,
+    );
+  });
+
+  it("returns false when the matching pending entry has been resolved", () => {
+    const bus = new EventBus();
+    const pending = new PendingChanges();
+    const id = pending.register({ sessionId: "s", path: ".env", event: "modified", level: "HIGH" });
+    pending.markResolved(id);
+    pushFileWrite(bus, ".env");
+    assert.equal(
+      shouldDeferToTelegram({ config: telegramConfig(), rule, bus, pending }),
+      false,
+    );
+  });
+
+  it("ignores bus events older than rule.windowMs", () => {
+    const bus = new EventBus();
+    const pending = new PendingChanges();
+    pending.register({ sessionId: "s", path: ".env", event: "modified", level: "HIGH" });
+    // 50s old: inside the bus's 60s retention but outside the rule's 30s window.
+    bus.push({
+      type: "file_write",
+      file: ".env",
+      raw: ".env",
+      subtype: "secret",
+      time: new Date(Date.now() - 50_000).toISOString(),
+    });
+    assert.equal(
+      shouldDeferToTelegram({ config: telegramConfig(), rule, bus, pending }),
+      false,
+    );
+  });
+});
+
+describe("logDetected with deferredTo extra", () => {
+  it("writes deferredTo:'telegram' alongside ruleId on the audit entry", () => {
+    const captured = [];
+    setSink((line) => { captured.push(JSON.parse(line)); });
+    try {
+      logDetected(
+        { source: "correlation", level: "HIGH", reason: "test", ruleId: "env-overwrite" },
+        "claude",
+        { deferredTo: "telegram" },
+      );
+    } finally {
+      setSink(() => {});
+    }
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].event, "incident_detected");
+    assert.equal(captured[0].source, "correlation");
+    assert.equal(captured[0].ruleId, "env-overwrite");
+    assert.equal(captured[0].deferredTo, "telegram");
+    assert.equal(captured[0].agent, "claude");
   });
 });

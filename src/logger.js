@@ -123,7 +123,7 @@ export function logDenied({ command, level, agent }) {
  * @param {{ source: string, level: string, reason: string, command?: string, ruleId?: string }} incident
  * @param {string} [agent]
  */
-export function logDetected(incident, agent) {
+export function logDetected(incident, agent, extras = {}) {
   const { source, level, reason, command, ruleId } = incident;
   log({
     event: "incident_detected",
@@ -132,6 +132,7 @@ export function logDetected(incident, agent) {
     reason,
     ...(command !== undefined && { command }),
     ...(ruleId !== undefined && { ruleId }),
+    ...extras,
     agent,
   });
 }
