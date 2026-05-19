@@ -16,6 +16,7 @@ import {
   sendTelegramAlert,
   sendFileChangeAlert,
   editAlertResolved,
+  sendSystemNotification,
 } from "../src/notifier.js";
 
 let passed = 0;
@@ -511,6 +512,105 @@ await testAsync(
     }
   }
 );
+
+// ─── sendSystemNotification ───────────────────────────────────────────────────
+
+function withPlatform(platform, fn) {
+  const desc = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: platform, configurable: true });
+  try {
+    return fn();
+  } finally {
+    Object.defineProperty(process, "platform", desc);
+  }
+}
+
+function captureSpawn() {
+  const calls = [];
+  const spawnFn = (cmd, argv, opts) => {
+    calls.push({ cmd, argv, opts });
+    return { on() {} };
+  };
+  return { spawnFn, calls };
+}
+
+test("sendSystemNotification → WARN level is a no-op", () => {
+  withPlatform("darwin", () => {
+    const { spawnFn, calls } = captureSpawn();
+    const result = sendSystemNotification(
+      { title: "package-lock.json", message: "modified", level: "WARN" },
+      {},
+      { spawnFn },
+    );
+    assert.strictEqual(result.skipped, "level");
+    assert.strictEqual(calls.length, 0);
+  });
+});
+
+test("sendSystemNotification → non-darwin platform is a no-op", () => {
+  withPlatform("linux", () => {
+    const { spawnFn, calls } = captureSpawn();
+    const result = sendSystemNotification(
+      { title: ".env", message: "modified", level: "HIGH" },
+      {},
+      { spawnFn },
+    );
+    assert.strictEqual(result.skipped, "platform");
+    assert.strictEqual(calls.length, 0);
+  });
+});
+
+test("sendSystemNotification → system.enabled:false is a no-op", () => {
+  withPlatform("darwin", () => {
+    const { spawnFn, calls } = captureSpawn();
+    const result = sendSystemNotification(
+      { title: ".env", message: "modified", level: "HIGH" },
+      { notifications: { system: { enabled: false } } },
+      { spawnFn },
+    );
+    assert.strictEqual(result.skipped, "disabled");
+    assert.strictEqual(calls.length, 0);
+  });
+});
+
+test("sendSystemNotification → HIGH on darwin spawns osascript with correct argv", () => {
+  withPlatform("darwin", () => {
+    const { spawnFn, calls } = captureSpawn();
+    const result = sendSystemNotification(
+      { title: ".env", message: "modified by claude", level: "HIGH" },
+      { notifications: { system: { enabled: true } } },
+      { spawnFn },
+    );
+    assert.strictEqual(result.skipped, null);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].cmd, "osascript");
+    assert.strictEqual(calls[0].argv[0], "-e");
+    const script = calls[0].argv[1];
+    assert.ok(script.includes("🔶 AgentGuard HIGH"), `script missing HIGH prefix: ${script}`);
+    assert.ok(script.includes("— .env"), `script missing title context: ${script}`);
+    assert.ok(script.includes("modified by claude"), `script missing message: ${script}`);
+    assert.strictEqual(calls[0].opts.stdio, "ignore");
+  });
+});
+
+test("sendSystemNotification → CRITICAL on darwin prefixes title with ⚠️ AgentGuard CRITICAL", () => {
+  withPlatform("darwin", () => {
+    const { spawnFn, calls } = captureSpawn();
+    const result = sendSystemNotification(
+      { title: "id_rsa", message: "deleted", level: "CRITICAL" },
+      { notifications: { system: { enabled: true } } },
+      { spawnFn },
+    );
+    assert.strictEqual(result.skipped, null);
+    assert.strictEqual(calls.length, 1);
+    const script = calls[0].argv[1];
+    assert.ok(
+      script.includes("⚠️ AgentGuard CRITICAL"),
+      `script missing CRITICAL prefix: ${script}`,
+    );
+    assert.ok(script.includes("— id_rsa"), `script missing title context: ${script}`);
+  });
+});
 
 // ─── summary ─────────────────────────────────────────────────────────────────
 

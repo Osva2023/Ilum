@@ -88,6 +88,13 @@ export const DEFAULT_CONFIG = {
       botToken: "",
       chatId: "",
     },
+    system: {
+      /**
+       * macOS-only native notifications for HIGH/CRITICAL detections.
+       * Defaults on for darwin; harmless elsewhere (the notifier no-ops).
+       */
+      enabled: process.platform === "darwin",
+    },
   },
   /**
    * Directories to watch when running the daemon (bin/agentguard-daemon.js).
@@ -171,6 +178,10 @@ export function mergeConfig(defaults, overrides) {
       telegram: {
         ...defaults.notifications.telegram,
         ...(overrides.notifications?.telegram ?? {}),
+      },
+      system: {
+        ...defaults.notifications.system,
+        ...(overrides.notifications?.system ?? {}),
       },
     },
     watchPaths: overrides.watchPaths ?? [...defaults.watchPaths],

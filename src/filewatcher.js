@@ -25,7 +25,11 @@ import { filterFired, suppression } from "./suppression.js";
 import { handleIncident } from "./enforcement.js";
 import { restoreSnapshot } from "./snapshot.js";
 import { isSensitive } from "./sensitive.js";
-import { isNotifierConfigured, sendFileChangeAlert } from "./notifier.js";
+import {
+  isNotifierConfigured,
+  sendFileChangeAlert,
+  sendSystemNotification,
+} from "./notifier.js";
 import { pending } from "./pending-changes.js";
 
 // ─── Sensitive file patterns ─────────────────────────────────────────────────
@@ -185,6 +189,14 @@ export function startFileWatcher({
             })
             .catch(() => {});
         }
+
+        // macOS native notification — fire-and-forget.  Internally gated to
+        // HIGH / CRITICAL only and to darwin only; WARN-level sensitive
+        // events (e.g. package-lock.json) never trigger a desktop popup.
+        sendSystemNotification(
+          { title: rel, message: `${event} by ${agent}`, level },
+          config,
+        );
       }
     } else {
       // Non-sensitive change — log quietly
