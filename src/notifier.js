@@ -283,6 +283,31 @@ function resolutionLineFor(outcome, by) {
   }
 }
 
+// ─── severity threshold ───────────────────────────────────────────────────────
+
+const LEVEL_ORDER = { WARN: 0, HIGH: 1, CRITICAL: 2 };
+
+/**
+ * Return true when `level` is at least as severe as `minLevel`.
+ * Used to gate noisy notification channels (Telegram, macOS popup).
+ *
+ * Level order: WARN < HIGH < CRITICAL.
+ *
+ * Unknown `level`           → false (fail closed; never fire on noise).
+ * Unknown / missing minLevel → treated as "HIGH" (current default behavior).
+ *
+ * @param {"WARN"|"HIGH"|"CRITICAL"|string} level
+ * @param {"WARN"|"HIGH"|"CRITICAL"|string|undefined} minLevel
+ * @returns {boolean}
+ */
+export function meetsThreshold(level, minLevel) {
+  const lv = LEVEL_ORDER[level];
+  if (lv === undefined) return false;
+  const min = LEVEL_ORDER[minLevel];
+  if (min === undefined) return lv >= LEVEL_ORDER.HIGH;
+  return lv >= min;
+}
+
 // ─── macOS system notification ───────────────────────────────────────────────
 
 /**
@@ -308,7 +333,7 @@ function resolutionLineFor(outcome, by) {
  *   `argv` is the osascript argv used, or null when skipped.
  */
 export function sendSystemNotification({ title, message, level }, config, opts = {}) {
-  if (level !== "HIGH" && level !== "CRITICAL") {
+  if (!meetsThreshold(level, config?.notifications?.minLevel)) {
     return { skipped: "level", argv: null };
   }
   if (process.platform !== "darwin") {

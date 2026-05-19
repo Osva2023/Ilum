@@ -27,6 +27,7 @@ import { restoreSnapshot } from "./snapshot.js";
 import { isSensitive } from "./sensitive.js";
 import {
   isNotifierConfigured,
+  meetsThreshold,
   sendFileChangeAlert,
   sendSystemNotification,
 } from "./notifier.js";
@@ -165,12 +166,17 @@ export function startFileWatcher({
         logIntercepted({ command: `${event}: ${rel}`, level, reason: "Sensitive file modified by agent", agent });
         console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel}`));
 
+        // Gate noisy out-of-band channels (Telegram + macOS popup) on the
+        // configured minimum severity.  Audit log + CLI stderr above are
+        // always emitted so the in-terminal observer never loses signal.
+        const passesThreshold = meetsThreshold(level, config?.notifications?.minLevel);
+
         // Register a pending change and fire a Telegram alert with inline
         // Keep / Rollback buttons.  Fire-and-forget so the watcher never
         // blocks on network latency.  Gated on isNotifierConfigured to
         // mirror the pty-interceptor.js pattern and avoid pending-entry
         // leaks when Telegram is unconfigured (no listener to consume them).
-        if (isNotifierConfigured(config)) {
+        if (passesThreshold && isNotifierConfigured(config)) {
           const changeId = pending.register({
             sessionId,
             path: rel,
@@ -190,13 +196,15 @@ export function startFileWatcher({
             .catch(() => {});
         }
 
-        // macOS native notification — fire-and-forget.  Internally gated to
-        // HIGH / CRITICAL only and to darwin only; WARN-level sensitive
-        // events (e.g. package-lock.json) never trigger a desktop popup.
-        sendSystemNotification(
-          { title: rel, message: `${event} by ${agent}`, level },
-          config,
-        );
+        // macOS native notification — fire-and-forget.  Threshold gate is
+        // applied here so we skip the string-building / spawn setup below
+        // configured minLevel; sendSystemNotification re-checks defensively.
+        if (passesThreshold) {
+          sendSystemNotification(
+            { title: rel, message: `${event} by ${agent}`, level },
+            config,
+          );
+        }
       }
     } else {
       // Non-sensitive change — log quietly

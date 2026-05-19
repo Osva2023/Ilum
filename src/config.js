@@ -82,6 +82,15 @@ export const DEFAULT_CONFIG = {
     path: "~/.agentguard/audit.log",
   },
   notifications: {
+    /**
+     * Minimum severity that triggers Telegram + macOS system notifications.
+     * Options (in order of increasing noise):
+     *   "CRITICAL" — only CRITICAL events notify
+     *   "HIGH"     — HIGH and CRITICAL notify (default)
+     *   "WARN"     — every sensitive event notifies (not recommended)
+     * Audit logging and CLI output are unaffected.
+     */
+    minLevel: "HIGH",
     telegram: {
       /** Set to true and provide botToken + chatId to enable Telegram alerts. */
       enabled: false,
@@ -175,6 +184,7 @@ export function mergeConfig(defaults, overrides) {
       ...(overrides.auditLog ?? {}),
     },
     notifications: {
+      minLevel: overrides.notifications?.minLevel ?? defaults.notifications.minLevel,
       telegram: {
         ...defaults.notifications.telegram,
         ...(overrides.notifications?.telegram ?? {}),
