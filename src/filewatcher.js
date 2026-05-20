@@ -81,14 +81,45 @@ export function shouldDeferToTelegram({ config, rule, bus, pending }) {
   return pending.listUnresolved().some((entry) => busFiles.has(entry.path));
 }
 
-// ─── Per-file cooldown for sensitive-file notices ────────────────────────────
+// ─── Per-file cooldown + session dedup for sensitive-file notices ────────────
 
-// Prevents spammy stderr notices and audit entries when a tool rewrites the
-// same sensitive file in quick succession (e.g. `npm install` touching
-// package-lock.json).  fileChanges and stats are unaffected — only the
-// stderr line and logIntercepted entry are throttled.
+// Two layers throttle sensitive-file notifications:
+//   1. recentSensitive — module-level cooldown (10s per file) that suppresses
+//      bursts (e.g. `npm install` rewriting package-lock.json many times).
+//      Suppresses everything: audit log, stderr, Telegram, macOS popup.
+//   2. notifiedFiles — per-watcher-session Set (see startFileWatcher) that
+//      ensures one *alert* per file per session.  After the first alert,
+//      subsequent events still write to the audit log but skip the noisy
+//      out-of-band channels (Telegram + macOS popup).
+// fileChanges and stats are unaffected by either layer.
 const SENSITIVE_COOLDOWN_MS = 10_000;
 const recentSensitive = new Map();
+
+/**
+ * Classify a sensitive-file event into "cooldown" | "dedup" | "fire".
+ *
+ *   cooldown — same file touched within cooldownMs; suppress everything.
+ *   dedup    — already alerted this session; audit log + dedup stderr only.
+ *   fire     — first sight; full alert path (audit + stderr + notifications).
+ *
+ * Mutates notifiedFiles (added on "fire") and recentSensitive (updated on
+ * "fire" + "dedup", preserved on "cooldown" so the burst anchor stands).
+ * Exported so unit tests can drive it without spinning up chokidar.
+ */
+export function classifySensitiveEvent({
+  rel,
+  now,
+  notifiedFiles,
+  recentSensitive,
+  cooldownMs = SENSITIVE_COOLDOWN_MS,
+}) {
+  const last = recentSensitive.get(rel);
+  if (last && now - last < cooldownMs) return "cooldown";
+  recentSensitive.set(rel, now);
+  if (notifiedFiles.has(rel)) return "dedup";
+  notifiedFiles.add(rel);
+  return "fire";
+}
 
 // ─── Watcher ─────────────────────────────────────────────────────────────────
 
@@ -125,6 +156,10 @@ export function startFileWatcher({
   const fileChanges = [];
   let handlingCorrelation = false; // prevent re-entrant enforcement
 
+  // Session-level dedup: one Telegram/macOS alert per file per startFileWatcher
+  // call.  Scoped here (not module-level) so a new watcher starts fresh.
+  const notifiedFiles = new Set();
+
   const watcher = chokidar.watch(cwd, {
     ignored: [
       /node_modules/,
@@ -157,12 +192,17 @@ export function startFileWatcher({
     if (sensitive) {
       if (stats) stats.intercepted = (stats.intercepted || 0) + 1;
 
-      const now = Date.now();
-      const last = recentSensitive.get(rel);
-      const onCooldown = last && now - last < SENSITIVE_COOLDOWN_MS;
+      const action = classifySensitiveEvent({
+        rel,
+        now: Date.now(),
+        notifiedFiles,
+        recentSensitive,
+      });
 
-      if (!onCooldown) {
-        recentSensitive.set(rel, now);
+      if (action === "dedup") {
+        logIntercepted({ command: `${event}: ${rel}`, level, reason: "Sensitive file modified by agent", agent });
+        console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel} (already alerted this session)`));
+      } else if (action === "fire") {
         logIntercepted({ command: `${event}: ${rel}`, level, reason: "Sensitive file modified by agent", agent });
         console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel}`));
 
@@ -206,6 +246,7 @@ export function startFileWatcher({
           );
         }
       }
+      // action === "cooldown": fully suppressed by the burst throttle.
     } else {
       // Non-sensitive change — log quietly
       console.error(chalk.gray(`[AgentGuard] 📝 ${event}: ${rel}`));
