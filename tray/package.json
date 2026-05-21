@@ -1,0 +1,14 @@
+{
+  "name": "agentguard-tray",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentGuard macOS menu bar tray app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "postinstall": "node make-icon.cjs"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

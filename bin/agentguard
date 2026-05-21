@@ -59,6 +59,11 @@ ${chalk.bold("Daemon (background file watcher):")}
   agentguard daemon logs       Tail ~/.agentguard/daemon.log
   agentguard daemon install    macOS: register with launchd (auto-start on login)
   agentguard daemon uninstall  macOS: unregister from launchd
+  agentguard daemon report     Summarise audit log (alias: agentguard report)
+                               Accepts --days=N (default 1 = today)
+
+${chalk.bold("Menu bar app (macOS):")}
+  agentguard tray              Launch the menu bar tray app (shows daemon status)
 
 ${chalk.bold("What it does:")}
   • Creates a git snapshot of your working tree before the session starts
@@ -91,10 +96,60 @@ if (agent === "dashboard") {
   process.exit(0);
 }
 
+// ─── report sub-command (top-level alias) ────────────────────────────────────
+
+if (agent === "report") {
+  const { runReport, parseDaysFlag } = await import("../src/report.js");
+  runReport({ days: parseDaysFlag(agentArgs) });
+  process.exit(0);
+}
+
+// ─── tray sub-command ────────────────────────────────────────────────────────
+
+if (agent === "tray") {
+  const { spawn } = await import("child_process");
+  const path = await import("path");
+  const fs = await import("fs");
+  const { fileURLToPath } = await import("url");
+
+  const trayDir = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "tray"
+  );
+  const electronBin = path.join(trayDir, "node_modules", ".bin", "electron");
+
+  if (!fs.existsSync(electronBin)) {
+    console.error(
+      chalk.red("[AgentGuard] tray dependencies not installed.")
+    );
+    console.error(chalk.gray(`  Run: cd ${trayDir} && npm install`));
+    process.exit(1);
+  }
+
+  const child = spawn(electronBin, [trayDir], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  console.error(
+    chalk.green(`[AgentGuard] tray launched (PID ${child.pid})`)
+  );
+  process.exit(0);
+}
+
 // ─── daemon sub-command ──────────────────────────────────────────────────────
 
 if (agent === "daemon") {
   const sub = agentArgs[0];
+  const subArgs = agentArgs.slice(1);
+
+  if (sub === "report") {
+    const { runReport, parseDaysFlag } = await import("../src/report.js");
+    runReport({ days: parseDaysFlag(subArgs) });
+    process.exit(0);
+  }
+
   const mod = await import("../src/daemon-control.js");
   const handlers = {
     start:     mod.daemonStart,
@@ -105,7 +160,7 @@ if (agent === "daemon") {
     uninstall: mod.daemonUninstall,
   };
   if (!sub || !handlers[sub]) {
-    console.error("Usage: agentguard daemon <start|stop|status|logs|install|uninstall>");
+    console.error("Usage: agentguard daemon <start|stop|status|logs|install|uninstall|report>");
     process.exit(1);
   }
   await handlers[sub]();

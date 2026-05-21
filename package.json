@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "start": "node bin/agentguard",
-    "test": "node test/classifier.test.js && node test/notifier.test.js && node test/config.test.js && node test/event-bus.test.js && node --test test/decoder.test.js && node --test test/suppression.test.js && node --test test/correlator.test.js && node --test test/enforcement.test.js && node --test test/snapshot-restore.test.js && node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
+    "test": "node test/classifier.test.js && node test/notifier.test.js && node test/config.test.js && node test/event-bus.test.js && node --test test/decoder.test.js && node --test test/suppression.test.js && node --test test/correlator.test.js && node --test test/enforcement.test.js && node --test test/snapshot-restore.test.js && node --test test/filewatcher-dedup.test.js && node --test test/report.test.js && node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
     "test:classifier": "node test/classifier.test.js",
     "test:notifier": "node test/notifier.test.js",
     "test:jest": "node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
@@ -30,7 +30,8 @@
     "express": "^4.21.0"
   },
   "optionalDependencies": {
-    "node-pty": "^1.1.0"
+    "node-pty": "^1.1.0",
+    "electron": "^33.0.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",

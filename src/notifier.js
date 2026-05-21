@@ -12,6 +12,8 @@
  * Uses native fetch (Node 18+) — no extra dependencies.
  */
 
+import { spawn } from "child_process";
+
 // ─── config resolution ────────────────────────────────────────────────────────
 
 function getTelegramConfig(config) {
@@ -279,4 +281,89 @@ function resolutionLineFor(outcome, by) {
     default:
       return null;
   }
+}
+
+// ─── severity threshold ───────────────────────────────────────────────────────
+
+const LEVEL_ORDER = { WARN: 0, HIGH: 1, CRITICAL: 2 };
+
+/**
+ * Return true when `level` is at least as severe as `minLevel`.
+ * Used to gate noisy notification channels (Telegram, macOS popup).
+ *
+ * Level order: WARN < HIGH < CRITICAL.
+ *
+ * Unknown `level`           → false (fail closed; never fire on noise).
+ * Unknown / missing minLevel → treated as "HIGH" (current default behavior).
+ *
+ * @param {"WARN"|"HIGH"|"CRITICAL"|string} level
+ * @param {"WARN"|"HIGH"|"CRITICAL"|string|undefined} minLevel
+ * @returns {boolean}
+ */
+export function meetsThreshold(level, minLevel) {
+  const lv = LEVEL_ORDER[level];
+  if (lv === undefined) return false;
+  const min = LEVEL_ORDER[minLevel];
+  if (min === undefined) return lv >= LEVEL_ORDER.HIGH;
+  return lv >= min;
+}
+
+// ─── macOS system notification ───────────────────────────────────────────────
+
+/**
+ * Display a native macOS notification via `osascript`.  Fire-and-forget:
+ * returns synchronously, never throws, never blocks the caller.
+ *
+ * No-ops when:
+ *   • level is not HIGH or CRITICAL
+ *   • process.platform !== "darwin"
+ *   • config.notifications.system.enabled === false
+ *   • osascript is missing or fails (silent — captured on the child's 'error' event)
+ *
+ * @param {Object} params
+ * @param {string} params.title   Context appended after the level prefix.
+ * @param {string} params.message Notification body.
+ * @param {"HIGH"|"CRITICAL"|string} params.level
+ * @param {object} [config]       Merged AgentGuard config.
+ * @param {Object} [opts]         Test seam.
+ * @param {Function} [opts.spawnFn] Override spawn for testing.
+ * @returns {{ skipped: string|null, argv: string[]|null }}
+ *   `skipped` names the reason a notification was not produced (level,
+ *   platform, disabled, spawn-error), or `null` on a successful spawn.
+ *   `argv` is the osascript argv used, or null when skipped.
+ */
+export function sendSystemNotification({ title, message, level }, config, opts = {}) {
+  if (!meetsThreshold(level, config?.notifications?.minLevel)) {
+    return { skipped: "level", argv: null };
+  }
+  if (process.platform !== "darwin") {
+    return { skipped: "platform", argv: null };
+  }
+
+  const sys = config?.notifications?.system ?? {};
+  if (sys.enabled === false) {
+    return { skipped: "disabled", argv: null };
+  }
+
+  const prefix =
+    level === "CRITICAL" ? "⚠️ AgentGuard CRITICAL" : "🔶 AgentGuard HIGH";
+  const fullTitle = title ? `${prefix} — ${title}` : prefix;
+
+  // AppleScript string literals: escape backslashes + double quotes, and
+  // collapse newlines so the -e script stays a single statement.
+  const escape = (s) =>
+    String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n]+/g, " ");
+
+  const script =
+    `display notification "${escape(message)}" with title "${escape(fullTitle)}"`;
+  const argv = ["-e", script];
+
+  const spawnFn = opts.spawnFn ?? spawn;
+  try {
+    const child = spawnFn("osascript", argv, { stdio: "ignore" });
+    child?.on?.("error", () => {}); // ENOENT, EACCES, etc — silent fail
+  } catch {
+    return { skipped: "spawn-error", argv };
+  }
+  return { skipped: null, argv };
 }

@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+  <title>AgentGuard</title>
+  <style>
+    :root {
+      --bg:        #1a1a1a;
+      --card:      #262626;
+      --border:    #333;
+      --text:      #e8e8e8;
+      --muted:     #888;
+      --accent:    #4ea1ff;
+      --green:     #4caf50;
+      --red:       #ef5350;
+      --yellow:    #ffb84d;
+      --orange:    #ff8a4d;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      font-size: 13px;
+      line-height: 1.4;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* ── header ─────────────────────────────────────────────── */
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      flex: 0 0 auto;
+    }
+
+    .header svg { width: 16px; height: 16px; fill: var(--text); }
+
+    .header .title {
+      font-weight: 600;
+      font-size: 13px;
+      flex: 1;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 500;
+      background: rgba(255,255,255,0.05);
+    }
+    .pill .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+    .pill.running { color: var(--green); }
+    .pill.running .dot { background: var(--green); }
+    .pill.stopped { color: var(--red); }
+    .pill.stopped .dot { background: var(--red); }
+
+    /* ── body ───────────────────────────────────────────────── */
+
+    .body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 12px 14px;
+    }
+
+    .section { margin-bottom: 14px; }
+
+    .section-title {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .card {
+      background: var(--card);
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+
+    .empty {
+      color: var(--muted);
+      font-style: italic;
+      font-size: 12px;
+      padding: 6px 0;
+    }
+
+    /* ── watching list ─────────────────────────────────────── */
+
+    .path-row {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      padding: 3px 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .path-row + .path-row { border-top: 1px solid var(--border); }
+
+    /* ── activity list ─────────────────────────────────────── */
+
+    .event-row {
+      display: grid;
+      grid-template-columns: 60px 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding: 4px 0;
+      font-size: 11px;
+    }
+    .event-row + .event-row { border-top: 1px solid var(--border); }
+
+    .event-time {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .event-file {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .badge {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.08);
+      color: var(--muted);
+    }
+    .badge.critical { background: rgba(239,83,80,0.15);  color: var(--red); }
+    .badge.high     { background: rgba(255,138,77,0.15); color: var(--orange); }
+    .badge.warn     { background: rgba(255,184,77,0.15); color: var(--yellow); }
+
+    /* ── footer ────────────────────────────────────────────── */
+
+    .footer {
+      display: flex;
+      gap: 8px;
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      flex: 0 0 auto;
+    }
+
+    button {
+      flex: 1;
+      padding: 8px 10px;
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    button:hover { background: #2f2f2f; }
+    button:active { background: #1f1f1f; }
+    button.primary { background: rgba(78,161,255,0.12); border-color: rgba(78,161,255,0.3); color: var(--accent); }
+    button.primary:hover { background: rgba(78,161,255,0.2); }
+    button.danger  { color: var(--red); }
+    button[disabled] { opacity: 0.5; cursor: default; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3z"/>
+    </svg>
+    <div class="title">AgentGuard</div>
+    <div id="status-pill" class="pill"><span class="dot"></span><span id="status-text">checking</span></div>
+  </div>
+
+  <div class="body">
+    <div class="section">
+      <div class="section-title">Watching</div>
+      <div id="watch-card" class="card"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Recent activity</div>
+      <div id="events-card" class="card"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <button id="report-btn">View full report</button>
+    <button id="toggle-btn" class="primary">…</button>
+  </div>
+
+  <script>
+    "use strict";
+
+    const $ = (id) => document.getElementById(id);
+
+    function fmtTime(iso) {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return "--:--:--";
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    function fileFromEvent(ev) {
+      // Daemon events typically have a `file` field; fall back to command, reason, or event name.
+      return ev.file || ev.command || ev.reason || ev.event || "(no detail)";
+    }
+
+    function badgeClass(level) {
+      const l = String(level || "").toLowerCase();
+      if (l === "critical" || l === "high" || l === "warn") return `badge ${l}`;
+      return "badge";
+    }
+
+    function renderWatching(paths) {
+      const el = $("watch-card");
+      if (!paths || paths.length === 0) {
+        el.innerHTML = '<div class="empty">No paths configured.</div>';
+        return;
+      }
+      el.innerHTML = paths
+        .map((p) => `<div class="path-row" title="${escapeHtml(p)}">${escapeHtml(p)}</div>`)
+        .join("");
+    }
+
+    function renderEvents(events) {
+      const el = $("events-card");
+      if (!events || events.length === 0) {
+        el.innerHTML = '<div class="empty">No daemon events yet.</div>';
+        return;
+      }
+      el.innerHTML = events
+        .map((ev) => `
+          <div class="event-row">
+            <span class="event-time">${escapeHtml(fmtTime(ev.ts))}</span>
+            <span class="event-file" title="${escapeHtml(fileFromEvent(ev))}">${escapeHtml(fileFromEvent(ev))}</span>
+            <span class="${badgeClass(ev.level)}">${escapeHtml(String(ev.level || "info"))}</span>
+          </div>
+        `)
+        .join("");
+    }
+
+    function renderStatus(status) {
+      const pill = $("status-pill");
+      const text = $("status-text");
+      pill.classList.remove("running", "stopped");
+      pill.classList.add(status);
+      text.textContent = status === "running" ? "Running" : "Stopped";
+
+      const btn = $("toggle-btn");
+      if (status === "running") {
+        btn.textContent = "Stop daemon";
+        btn.classList.remove("primary");
+        btn.classList.add("danger");
+      } else {
+        btn.textContent = "Start daemon";
+        btn.classList.remove("danger");
+        btn.classList.add("primary");
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    async function render() {
+      try {
+        const state = await window.agentguard.getState();
+        renderStatus(state.status);
+        renderWatching(state.watchPaths);
+        renderEvents(state.events);
+      } catch (err) {
+        $("events-card").innerHTML = `<div class="empty">Error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function withBusy(btn, fn) {
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "…";
+      try { await fn(); } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      $("report-btn").addEventListener("click", () => {
+        window.agentguard.openReport();
+      });
+      $("toggle-btn").addEventListener("click", async (ev) => {
+        const btn = ev.currentTarget;
+        await withBusy(btn, async () => {
+          const isRunning = $("status-pill").classList.contains("running");
+          if (isRunning) await window.agentguard.stopDaemon();
+          else           await window.agentguard.startDaemon();
+          // Small delay so daemon-control has time to write/remove the PID file.
+          await new Promise((r) => setTimeout(r, 400));
+          await render();
+        });
+      });
+
+      window.agentguard.onStateChanged(render);
+      render();
+    });
+  </script>
+</body>
+</html>
