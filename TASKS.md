@@ -73,7 +73,7 @@
 **Scope:** Crear un `CLAUDE.md` en la raíz del repo que explique a Claude Code la arquitectura del proyecto, convenciones de código, qué archivos no tocar, y cómo correr los tests. Esto es crítico para el modo remoto — Claude necesita contexto permanente.  
 **Contenido mínimo:** Stack, estructura de carpetas, cómo correr tests, convenciones ESM, qué es cada módulo principal, rama de trabajo (dev), cómo hacer commit y push.  
 **Acceptance:** Claude Code en una sesión nueva puede entender el proyecto sin explicación adicional.  
-**Status:** TODO
+**Status:** DONE
 
 ---
 
