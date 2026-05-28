@@ -84,7 +84,8 @@
 **Files:** `package.json`, `README.md`  
 **Scope:** Mergear dev → main. Revisar README una vez más (instrucciones de Telegram más visibles, instrucciones de tray más claras). Bump version a 1.0.0. `npm publish`. Tag en git.  
 **Acceptance:** `npm install -g agentguard-dev` instala v1.0.0. La página de npm muestra la versión correcta.  
-**Status:** TODO
+**Status:** POSTPONED  
+**Nota:** Pospuesto — publicar cuando Semana 2 esté completa.
 
 ---
 
