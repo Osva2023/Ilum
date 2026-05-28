@@ -16,7 +16,7 @@
 **Files:** `src/correlation-rules.js`  
 **Scope:** Agregar `.next/` a la lista de build artifacts excluidos de la regla mass-delete. Hoy solo están `dist/`, `build/`, y `.next/build/`. Agregar también `.next/`, `.next/dev/`, `.next/server/`, `.next/static/`, `.next/cache/`.  
 **Acceptance:** Un `next build` en un proyecto vigilado no dispara mass-delete CRITICAL.  
-**Status:** TODO
+**Status:** DONE
 
 ---
 

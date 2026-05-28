@@ -32,8 +32,17 @@ import crypto from "crypto";
 
 // ─── paths ───────────────────────────────────────────────────────────────────
 
-const AGENTGUARD_DIR = path.join(os.homedir(), ".agentguard");
-const LOG_FILE = path.join(AGENTGUARD_DIR, "audit.log");
+// Under test (NODE_ENV=test or AGENTGUARD_TEST=1) the audit log is redirected to
+// a throwaway file in the OS temp dir so unit tests never pollute the user's real
+// ~/.agentguard/audit.log. The temp file is per-process and safe to discard.
+const IS_TEST = process.env.NODE_ENV === "test" || process.env.AGENTGUARD_TEST === "1";
+
+const AGENTGUARD_DIR = IS_TEST
+  ? path.join(os.tmpdir(), "agentguard-test")
+  : path.join(os.homedir(), ".agentguard");
+const LOG_FILE = IS_TEST
+  ? path.join(AGENTGUARD_DIR, `audit-${crypto.randomBytes(6).toString("hex")}.log`)
+  : path.join(AGENTGUARD_DIR, "audit.log");
 
 // ─── session id ──────────────────────────────────────────────────────────────
 
