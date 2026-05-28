@@ -64,6 +64,8 @@ ${chalk.bold("Daemon (background file watcher):")}
 
 ${chalk.bold("Menu bar app (macOS):")}
   agentguard tray              Launch the menu bar tray app (shows daemon status)
+  agentguard tray install      Register with launchd (auto-start on login)
+  agentguard tray uninstall    Unregister from launchd
 
 ${chalk.bold("What it does:")}
   • Creates a git snapshot of your working tree before the session starts
@@ -107,6 +109,21 @@ if (agent === "report") {
 // ─── tray sub-command ────────────────────────────────────────────────────────
 
 if (agent === "tray") {
+  const sub = agentArgs[0];
+
+  // `agentguard tray install|uninstall` — launchd lifecycle (auto-start on login).
+  if (sub === "install" || sub === "uninstall") {
+    const mod = await import("../src/tray-control.js");
+    await (sub === "install" ? mod.trayInstall() : mod.trayUninstall());
+    process.exit(0);
+  }
+
+  if (sub) {
+    console.error("Usage: agentguard tray [install|uninstall]");
+    process.exit(1);
+  }
+
+  // No subcommand → launch the menu-bar app in the foreground session.
   const { spawn } = await import("child_process");
   const path = await import("path");
   const fs = await import("fs");

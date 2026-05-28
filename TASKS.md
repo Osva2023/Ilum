@@ -61,7 +61,7 @@
 **Files:** `src/daemon-control.js`, `bin/agentguard`, `tray/main.js`  
 **Scope:** Agregar `agentguard tray install` / `agentguard tray uninstall` similar a como funciona el daemon. Genera un plist de launchd para la tray app que arranque en login. El plist debe usar rutas absolutas a electron y al directorio tray/.  
 **Acceptance:** Después de `agentguard tray install`, el ícono de escudo aparece en la barra de menú automáticamente después de reiniciar.  
-**Status:** TODO
+**Status:** DONE
 
 ---
 
