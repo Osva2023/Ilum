@@ -113,7 +113,7 @@
 **Files:** `src/dashboard/server.js`, `src/dashboard/public/index.html`  
 **Scope:** Click en una sesión muestra el timeline de eventos en orden cronológico: hora local, archivo tocado, nivel (color coded), tipo de evento. Mostrar si fue Keep, Rollback, o sin acción.  
 **Acceptance:** Puedo ver exactamente qué hizo el agente durante una sesión, archivo por archivo, con timestamps en hora local.  
-**Status:** TODO
+**Status:** DONE
 
 ---
 

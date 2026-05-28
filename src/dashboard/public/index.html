@@ -139,6 +139,60 @@
     .level-WARN     { background: var(--warn); color: #111; }
     .level-none     { color: var(--muted); font-size: 11px; }
 
+    /* ── session detail / timeline ── */
+    .detail-head { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+    .back-btn {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .back-btn:hover { background: rgba(124,107,255,0.08); border-color: var(--accent); }
+    .detail-title { display: flex; flex-direction: column; gap: 2px; }
+    .detail-title .main { font-size: 15px; font-weight: bold; }
+    .detail-title .sub { color: var(--muted); font-size: 11px; }
+
+    .timeline {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .tl-header, .tl-row {
+      display: grid;
+      grid-template-columns: 92px 130px 1fr 90px 120px;
+      gap: 12px;
+      padding: 9px 16px;
+      align-items: baseline;
+    }
+    .tl-header {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-bottom: 1px solid var(--border);
+    }
+    .tl-row { border-bottom: 1px solid #1f1f1f; font-size: 12px; }
+    .tl-row:last-child { border-bottom: none; }
+    .tl-row:hover { background: rgba(124,107,255,0.05); }
+    .tl-time { color: var(--muted); }
+    .tl-type { color: var(--text); }
+    .tl-type.sensitive  { color: var(--accent); }
+    .tl-type.correlation { color: #4fc3f7; }
+    .tl-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tl-action { font-size: 11px; }
+    .tl-action.kept, .tl-action.approved { color: var(--green); }
+    .tl-action.denied { color: var(--red); }
+    .tl-action.rolled { color: #4fc3f7; }
+    .tl-action.none { color: var(--muted); }
+
+    .hidden { display: none; }
+
     /* ── empty state ── */
     .empty-state { padding: 48px; text-align: center; color: var(--muted); }
     .empty-state .big { font-size: 32px; margin-bottom: 12px; }
@@ -162,14 +216,29 @@
 </header>
 
 <main>
-  <div class="filters" id="filters">
-    <button class="filter-btn" data-range="today">Hoy</button>
-    <button class="filter-btn active" data-range="7d">Últimos 7 días</button>
-    <button class="filter-btn" data-range="30d">Últimos 30 días</button>
+  <!-- List view -->
+  <div id="list-view">
+    <div class="filters" id="filters">
+      <button class="filter-btn" data-range="today">Hoy</button>
+      <button class="filter-btn active" data-range="7d">Últimos 7 días</button>
+      <button class="filter-btn" data-range="30d">Últimos 30 días</button>
+    </div>
+
+    <div id="projects">
+      <div class="empty-state"><div class="big">📋</div><p>Loading…</p></div>
+    </div>
   </div>
 
-  <div id="projects">
-    <div class="empty-state"><div class="big">📋</div><p>Loading…</p></div>
+  <!-- Detail / timeline view -->
+  <div id="detail-view" class="hidden">
+    <div class="detail-head">
+      <button class="back-btn" id="back-btn">← Back</button>
+      <div class="detail-title">
+        <span class="main" id="detail-main">Session</span>
+        <span class="sub" id="detail-sub"></span>
+      </div>
+    </div>
+    <div class="timeline" id="timeline"></div>
   </div>
 </main>
 
@@ -216,6 +285,54 @@
     return level
       ? `<span class="level-badge level-${level}">${level}</span>`
       : `<span class="level-none">—</span>`;
+  }
+
+  // Local time-of-day, HH:MM:SS
+  function fmtClock(ts) {
+    if (!ts) return "—";
+    const d = new Date(ts);
+    if (isNaN(d)) return "—";
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  }
+
+  // Event → human category, with a CSS class for color.
+  function eventType(e) {
+    if (e.source === "filewatch") return { label: "Sensitive file", cls: "sensitive" };
+    if (e.source === "correlation") return { label: "Correlation", cls: "correlation" };
+    if (e.source === "command" || (e.event || "").startsWith("command_")) return { label: "Command", cls: "" };
+    if (e.event === "session_start" || e.event === "session_end") return { label: "Session", cls: "" };
+    if (e.event === "snapshot_created" || e.event === "snapshot_restore") return { label: "Snapshot", cls: "" };
+    if (e.event === "review_kept") return { label: "Sensitive file", cls: "sensitive" };
+    if (e.event === "file_restore" || e.event === "telegram_keep") return { label: "Sensitive file", cls: "sensitive" };
+    return { label: e.event || "event", cls: "" };
+  }
+
+  // What the file/command column should show.
+  function eventDetail(e) {
+    if (e.file) return e.file;
+    if (e.command) return e.command;
+    if (e.stashRef) return e.stashRef;
+    if (e.event === "session_start") return "session started" + (e.agent ? " · " + e.agent : "");
+    if (e.event === "session_end") return "session ended";
+    if (e.reason) return e.reason;       // correlation events have no file/command
+    if (e.message) return e.message;
+    return "";
+  }
+
+  // Keep / Rollback / Approved / Denied / none.
+  function eventAction(e) {
+    const by = e.by ? " by @" + e.by : "";
+    switch (e.event) {
+      case "review_kept":
+      case "telegram_keep":      return { label: "Kept" + by, cls: "kept" };
+      case "incident_approved":
+      case "command_approved":   return { label: "Approved", cls: "approved" };
+      case "incident_denied":
+      case "command_denied":     return { label: "Denied", cls: "denied" };
+      case "file_restore":       return { label: (e.restored ? "Rolled back" : "Rollback failed") + by, cls: "rolled" };
+      case "snapshot_restore":   return { label: e.restored ? "Rolled back" : "Rollback failed", cls: "rolled" };
+      default:                   return { label: "—", cls: "none" };
+    }
   }
 
   async function fetchJson(url) {
@@ -276,14 +393,76 @@
       </div>`;
     }).join("");
 
-    // Click hook for the per-session timeline (TASK-008).
+    // Open the per-session timeline (TASK-008).
     for (const card of root.querySelectorAll(".session-card")) {
-      card.addEventListener("click", () => {
-        // Timeline view lands in TASK-008; affordance wired up now.
-        console.log("open session", card.dataset.sessionId);
-      });
+      card.addEventListener("click", () => openSession(card.dataset.sessionId));
     }
   }
+
+  // ── session detail / timeline ──
+  let openSessionId = null;
+
+  function showListView() {
+    openSessionId = null;
+    document.getElementById("detail-view").classList.add("hidden");
+    document.getElementById("list-view").classList.remove("hidden");
+    refresh();
+  }
+
+  async function openSession(id) {
+    if (!id) return;
+    openSessionId = id;
+    document.getElementById("list-view").classList.add("hidden");
+    document.getElementById("detail-view").classList.remove("hidden");
+    await renderTimeline(id);
+  }
+
+  async function renderTimeline(id) {
+    const timeline = document.getElementById("timeline");
+    let session;
+    try {
+      session = await fetchJson("/api/sessions/" + id);
+    } catch (err) {
+      timeline.innerHTML = `<div class="empty-state">Failed to load session: ${escHtml(err.message)}</div>`;
+      return;
+    }
+
+    document.getElementById("detail-main").textContent =
+      "Session " + shortId(id) + " · " + (session.agent || "—");
+    document.getElementById("detail-sub").textContent =
+      "Started " + fmtStartLocal(session.startTime) +
+      "  ·  " + (session.events ? session.events.length : 0) + " events";
+
+    const events = (session.events || [])
+      .slice()
+      .sort((a, b) => new Date(a.ts || 0) - new Date(b.ts || 0));
+
+    if (events.length === 0) {
+      timeline.innerHTML = `<div class="empty-state">No events recorded for this session.</div>`;
+      return;
+    }
+
+    const header = `<div class="tl-header">
+      <span>Time</span><span>Type</span><span>File / command</span>
+      <span>Level</span><span>Action</span>
+    </div>`;
+
+    const rows = events.map((e) => {
+      const type = eventType(e);
+      const action = eventAction(e);
+      return `<div class="tl-row">
+        <span class="tl-time">${fmtClock(e.ts)}</span>
+        <span class="tl-type ${type.cls}">${escHtml(type.label)}</span>
+        <span class="tl-detail" title="${escHtml(eventDetail(e))}">${escHtml(eventDetail(e)) || "—"}</span>
+        <span>${levelBadge(e.level)}</span>
+        <span class="tl-action ${action.cls}">${escHtml(action.label)}</span>
+      </div>`;
+    }).join("");
+
+    timeline.innerHTML = header + rows;
+  }
+
+  document.getElementById("back-btn").addEventListener("click", showListView);
 
   // ── filters ──
   document.getElementById("filters").addEventListener("click", (e) => {
@@ -299,11 +478,18 @@
   // ── polling ──
   async function refresh() {
     try {
-      const [status, data] = await Promise.all([
-        fetchJson("/api/daemon-status"),
-        fetchJson("/api/sessions?range=" + currentRange),
-      ]);
+      const status = await fetchJson("/api/daemon-status");
       renderDaemon(status.running);
+    } catch (err) {
+      console.warn("Daemon status refresh failed:", err.message);
+    }
+    // While viewing a session, keep its timeline fresh; otherwise refresh the list.
+    if (openSessionId) {
+      renderTimeline(openSessionId).catch(() => {});
+      return;
+    }
+    try {
+      const data = await fetchJson("/api/sessions?range=" + currentRange);
       renderProjects(data.projects);
     } catch (err) {
       console.warn("Dashboard refresh failed:", err.message);
