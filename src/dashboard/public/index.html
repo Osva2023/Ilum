@@ -10,17 +10,16 @@
     :root {
       --bg:       #0f0f0f;
       --surface:  #1a1a1a;
+      --surface2: #141414;
       --border:   #2a2a2a;
       --accent:   #7c6bff;
-      --accent2:  #5a4de0;
       --text:     #e0e0e0;
       --muted:    #888;
       --critical: #ff4f4f;
       --high:     #ff8c42;
       --warn:     #ffd166;
-      --safe:     #06d6a0;
-      --approved: #06d6a0;
-      --blocked:  #ff4f4f;
+      --green:    #06d6a0;
+      --red:      #ff4f4f;
     }
 
     body {
@@ -44,7 +43,6 @@
       top: 0;
       z-index: 10;
     }
-
     .logo {
       display: flex;
       align-items: center;
@@ -52,187 +50,101 @@
       font-size: 16px;
       font-weight: bold;
       color: var(--accent);
+      letter-spacing: 0.04em;
+    }
+    .logo-shield { font-size: 20px; }
+    .header-right { display: flex; align-items: center; gap: 16px; }
+    .clock { color: var(--muted); font-size: 12px; letter-spacing: 0.08em; }
+
+    /* ── daemon status pill ── */
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.05);
+      font-size: 12px;
       letter-spacing: 0.05em;
     }
-
-    .logo-shield { font-size: 20px; }
-
-    .clock {
-      color: var(--muted);
-      font-size: 12px;
-      letter-spacing: 0.08em;
-    }
+    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .pill.running { color: var(--green); }
+    .pill.running .dot { background: var(--green); animation: pulse 2s ease-in-out infinite; }
+    .pill.stopped { color: var(--red); }
+    .pill.stopped .dot { background: var(--red); }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
     /* ── main layout ── */
     main { padding: 24px; max-width: 1100px; margin: 0 auto; }
 
-    /* ── stats bar ── */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      margin-bottom: 28px;
-    }
-
-    .stat-card {
+    /* ── filters ── */
+    .filters { display: flex; gap: 0; margin-bottom: 24px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; }
+    .filter-btn {
       background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .stat-label {
       color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-
-    .stat-value {
-      font-size: 28px;
-      font-weight: bold;
-      color: var(--text);
-    }
-
-    .stat-card.sessions  .stat-value { color: var(--accent); }
-    .stat-card.intercept .stat-value { color: var(--warn); }
-    .stat-card.blocked   .stat-value { color: var(--blocked); }
-    .stat-card.approved  .stat-value { color: var(--approved); }
-
-    /* ── section heading ── */
-    .section-heading {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--muted);
-      margin-bottom: 10px;
-    }
-
-    /* ── sessions table ── */
-    .sessions-table {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      overflow: hidden;
-    }
-
-    .table-header {
-      display: grid;
-      grid-template-columns: 100px 90px 1fr 100px 80px 80px 80px;
-      gap: 8px;
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-
-    .session-row {
-      display: grid;
-      grid-template-columns: 100px 90px 1fr 100px 80px 80px 80px;
-      gap: 8px;
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      cursor: pointer;
-      transition: background 0.12s;
-    }
-
-    .session-row:last-child { border-bottom: none; }
-    .session-row:hover { background: rgba(124,107,255,0.08); }
-    .session-row.expanded { background: rgba(124,107,255,0.12); border-bottom: none; }
-
-    .session-id { color: var(--accent); font-size: 12px; }
-    .session-agent { color: var(--text); }
-    .session-time { color: var(--muted); font-size: 11px; }
-    .session-duration { color: var(--muted); text-align: right; }
-    .session-intercept { color: var(--warn); text-align: right; }
-    .session-blocked { color: var(--blocked); text-align: right; }
-    .session-approved { color: var(--approved); text-align: right; }
-
-    /* ── expanded event list ── */
-    .events-panel {
-      background: #111;
-      border-bottom: 1px solid var(--border);
-      padding: 12px 16px;
-      display: none;
-    }
-
-    .events-panel.open { display: block; }
-
-    .events-panel-heading {
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 8px;
-    }
-
-    .event-item {
-      display: flex;
-      gap: 12px;
-      padding: 4px 0;
-      border-bottom: 1px solid #1e1e1e;
+      border: none;
+      border-right: 1px solid var(--border);
+      padding: 8px 18px;
+      font-family: inherit;
       font-size: 12px;
-      align-items: baseline;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
     }
+    .filter-btn:last-child { border-right: none; }
+    .filter-btn:hover { background: rgba(124,107,255,0.08); color: var(--text); }
+    .filter-btn.active { background: var(--accent); color: #fff; font-weight: bold; }
 
-    .event-item:last-child { border-bottom: none; }
+    /* ── project group ── */
+    .project-group { margin-bottom: 28px; }
+    .project-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .project-name { font-size: 15px; font-weight: bold; color: var(--text); }
+    .project-path { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .project-count { margin-left: auto; font-size: 11px; color: var(--muted); flex-shrink: 0; }
 
-    .event-ts { color: var(--muted); flex-shrink: 0; width: 90px; font-size: 11px; }
-    .event-type { flex-shrink: 0; width: 170px; }
-    .event-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    .event-type.session_start   { color: var(--accent); }
-    .event-type.session_end     { color: var(--muted); }
-    .event-type.command_intercepted { color: var(--warn); }
-    .event-type.command_approved    { color: var(--approved); }
-    .event-type.command_denied      { color: var(--blocked); }
-    .event-type.snapshot_created    { color: #4fc3f7; }
+    /* ── session card ── */
+    .session-card {
+      display: grid;
+      grid-template-columns: 1fr 130px 150px 90px;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .session-card:hover { background: rgba(124,107,255,0.07); border-color: var(--accent); }
+    .session-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .session-start { color: var(--text); }
+    .session-sub { color: var(--muted); font-size: 11px; }
+    .session-id { color: var(--accent); }
+    .col { display: flex; flex-direction: column; gap: 2px; }
+    .col-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+    .col-value { color: var(--text); }
+    .col-value.sensitive { color: var(--warn); }
+    .badge-cell { text-align: right; }
 
     .level-badge {
       display: inline-block;
-      padding: 1px 6px;
-      border-radius: 3px;
+      padding: 2px 8px;
+      border-radius: 4px;
       font-size: 10px;
       font-weight: bold;
-      margin-left: 4px;
+      letter-spacing: 0.04em;
     }
-
     .level-CRITICAL { background: var(--critical); color: #fff; }
     .level-HIGH     { background: var(--high); color: #111; }
     .level-WARN     { background: var(--warn); color: #111; }
+    .level-none     { color: var(--muted); font-size: 11px; }
 
     /* ── empty state ── */
-    .empty-state {
-      padding: 48px;
-      text-align: center;
-      color: var(--muted);
-    }
-
+    .empty-state { padding: 48px; text-align: center; color: var(--muted); }
     .empty-state .big { font-size: 32px; margin-bottom: 12px; }
-    .empty-state p { font-size: 13px; }
-
-    /* ── refresh indicator ── */
-    .refresh-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--safe);
-      display: inline-block;
-      margin-right: 6px;
-      animation: pulse 2s ease-in-out infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.3; }
-    }
 
     .refresh-label { color: var(--muted); font-size: 11px; }
+    .refresh-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); display: inline-block; margin-right: 6px; animation: pulse 2s ease-in-out infinite; }
   </style>
 </head>
 <body>
@@ -240,213 +152,159 @@
 <header>
   <div class="logo">
     <span class="logo-shield">🛡</span>
-    AgentGuard
+    AgentGuard Dashboard
   </div>
-  <div style="display:flex;align-items:center;gap:16px;">
+  <div class="header-right">
+    <span id="daemon-pill" class="pill"><span class="dot"></span><span id="daemon-text">checking…</span></span>
     <span class="refresh-label"><span class="refresh-dot"></span>auto-refresh 5s</span>
     <span class="clock" id="clock"></span>
   </div>
 </header>
 
 <main>
-  <!-- Stats bar -->
-  <div class="stats-grid">
-    <div class="stat-card sessions">
-      <div class="stat-label">Sessions</div>
-      <div class="stat-value" id="stat-sessions">—</div>
-    </div>
-    <div class="stat-card intercept">
-      <div class="stat-label">Intercepted</div>
-      <div class="stat-value" id="stat-intercepted">—</div>
-    </div>
-    <div class="stat-card blocked">
-      <div class="stat-label">Blocked</div>
-      <div class="stat-value" id="stat-blocked">—</div>
-    </div>
-    <div class="stat-card approved">
-      <div class="stat-label">Approved</div>
-      <div class="stat-value" id="stat-approved">—</div>
-    </div>
+  <div class="filters" id="filters">
+    <button class="filter-btn" data-range="today">Hoy</button>
+    <button class="filter-btn active" data-range="7d">Últimos 7 días</button>
+    <button class="filter-btn" data-range="30d">Últimos 30 días</button>
   </div>
 
-  <!-- Sessions table -->
-  <div class="section-heading">Sessions</div>
-  <div class="sessions-table" id="sessions-table">
-    <div class="empty-state">
-      <div class="big">📋</div>
-      <p>No sessions yet — start an agent with <code>agentguard &lt;agent&gt;</code></p>
-    </div>
+  <div id="projects">
+    <div class="empty-state"><div class="big">📋</div><p>Loading…</p></div>
   </div>
 </main>
 
 <script>
-  // ── clock ────────────────────────────────────────────────────────────────────
+  let currentRange = "7d";
+
+  // ── clock ──
   function updateClock() {
     document.getElementById("clock").textContent = new Date().toLocaleTimeString();
   }
   updateClock();
   setInterval(updateClock, 1000);
 
-  // ── helpers ──────────────────────────────────────────────────────────────────
-  function shortId(id) {
-    return id ? id.slice(0, 8) : "—";
+  // ── helpers ──
+  function escHtml(str) {
+    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
+  function shortId(id) { return id ? id.slice(0, 8) : "—"; }
 
-  function fmtTime(ts) {
+  // Local start timestamp, e.g. "May 28, 2:35:52 PM"
+  function fmtStartLocal(ts) {
     if (!ts) return "—";
     const d = new Date(ts);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    if (isNaN(d)) return "—";
+    return d.toLocaleString([], { month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
-  function fmtDuration(startTs, endTs) {
-    if (!startTs) return "—";
-    const ms = (endTs ? new Date(endTs) : new Date()) - new Date(startTs);
-    if (ms < 0) return "—";
+  // Human-readable duration, e.g. "1h 23m"
+  function fmtDuration(ms) {
+    if (!ms || ms < 0) return "—";
     const s = Math.floor(ms / 1000);
     if (s < 60) return s + "s";
-    const m = Math.floor(s / 60);
-    return m + "m " + (s % 60) + "s";
+    const days = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (days) return days + "d " + h + "h";
+    if (h)    return h + "h " + m + "m";
+    return m + "m";
   }
 
-  function eventLabel(type) {
-    return {
-      session_start:       "session_start",
-      session_end:         "session_end",
-      command_intercepted: "command_intercepted",
-      command_approved:    "command_approved",
-      command_denied:      "command_denied",
-      snapshot_created:    "snapshot_created",
-    }[type] || type;
+  function levelBadge(level) {
+    return level
+      ? `<span class="level-badge level-${level}">${level}</span>`
+      : `<span class="level-none">—</span>`;
   }
 
-  // ── fetch helpers ─────────────────────────────────────────────────────────────
   async function fetchJson(url) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(res.statusText);
     return res.json();
   }
 
-  // ── session expansion ─────────────────────────────────────────────────────────
-  const expandedSessions = new Set();
-
-  async function toggleSession(id) {
-    const panel = document.getElementById("panel-" + id);
-    const row   = document.getElementById("row-" + id);
-    if (!panel) return;
-
-    if (panel.classList.contains("open")) {
-      panel.classList.remove("open");
-      row.classList.remove("expanded");
-      expandedSessions.delete(id);
-    } else {
-      panel.classList.add("open");
-      row.classList.add("expanded");
-      expandedSessions.add(id);
-      await loadSessionEvents(id);
-    }
+  // ── render ──
+  function renderDaemon(running) {
+    const pill = document.getElementById("daemon-pill");
+    const text = document.getElementById("daemon-text");
+    pill.classList.remove("running", "stopped");
+    pill.classList.add(running ? "running" : "stopped");
+    text.textContent = running ? "daemon running" : "daemon stopped";
   }
 
-  async function loadSessionEvents(id) {
-    const panel = document.getElementById("panel-" + id);
-    if (!panel) return;
-    try {
-      const session = await fetchJson("/api/sessions/" + id);
-      const events = session.events || [];
-      if (events.length === 0) {
-        panel.innerHTML = '<div class="events-panel-heading">No events</div>';
-        return;
-      }
-      const rows = events.map((e) => {
-        const levelBadge = e.level
-          ? `<span class="level-badge level-${e.level}">${e.level}</span>`
-          : "";
-        const detail = e.command
-          ? `<span class="event-detail">${escHtml(e.command)}</span>${levelBadge}`
-          : (e.stashRef ? `<span class="event-detail">${escHtml(e.stashRef)}</span>` : "");
-        return `<div class="event-item">
-          <span class="event-ts">${fmtTime(e.ts)}</span>
-          <span class="event-type ${e.event || ""}">${eventLabel(e.event)}</span>
-          ${detail}
-        </div>`;
-      }).join("");
-      panel.innerHTML = '<div class="events-panel-heading">Events</div>' + rows;
-    } catch (err) {
-      panel.innerHTML = `<div class="events-panel-heading" style="color:var(--blocked)">Failed to load: ${escHtml(err.message)}</div>`;
-    }
-  }
+  function renderProjects(projects) {
+    const root = document.getElementById("projects");
 
-  function escHtml(str) {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-
-  // ── render ────────────────────────────────────────────────────────────────────
-  function renderSessions(sessions) {
-    const table = document.getElementById("sessions-table");
-
-    if (!sessions || sessions.length === 0) {
-      table.innerHTML = `<div class="empty-state">
-        <div class="big">📋</div>
-        <p>No sessions yet — start an agent with <code>agentguard &lt;agent&gt;</code></p>
-      </div>`;
+    if (!projects || projects.length === 0) {
+      root.innerHTML = `<div class="empty-state"><div class="big">📋</div>
+        <p>No sessions in this range. Start the daemon or run <code>agentguard &lt;agent&gt;</code>.</p></div>`;
       return;
     }
 
-    const header = `<div class="table-header">
-      <span>Session</span>
-      <span>Agent</span>
-      <span>Started</span>
-      <span style="text-align:right">Duration</span>
-      <span style="text-align:right">Intercepted</span>
-      <span style="text-align:right">Blocked</span>
-      <span style="text-align:right">Approved</span>
-    </div>`;
+    root.innerHTML = projects.map((g) => {
+      const path = g.fullPath
+        ? `<span class="project-path">${escHtml(g.fullPath)}</span>`
+        : (g.project === "(command-line)"
+            ? `<span class="project-path">interactive runs (no project path)</span>`
+            : `<span class="project-path">not in watchPaths</span>`);
 
-    const rows = sessions.map((s) => {
-      const isExpanded = expandedSessions.has(s.sessionId);
-      return `
-        <div class="session-row ${isExpanded ? "expanded" : ""}" id="row-${escHtml(s.sessionId)}"
-             onclick="toggleSession('${escHtml(s.sessionId)}')">
-          <span class="session-id">${shortId(s.sessionId)}</span>
-          <span class="session-agent">${escHtml(s.agent || "—")}</span>
-          <span class="session-time">${fmtTime(s.startTime)}</span>
-          <span class="session-duration">${fmtDuration(s.startTime, s.endTime)}</span>
-          <span class="session-intercept">${s.intercepted}</span>
-          <span class="session-blocked">${s.blocked}</span>
-          <span class="session-approved">${s.approved}</span>
+      const cards = g.sessions.map((s) => `
+        <div class="session-card" data-session-id="${escHtml(s.sessionId)}">
+          <div class="session-meta">
+            <span class="session-start">${escHtml(fmtStartLocal(s.startTime))}</span>
+            <span class="session-sub"><span class="session-id">${shortId(s.sessionId)}</span> · ${escHtml(s.agent || "—")}</span>
+          </div>
+          <div class="col">
+            <span class="col-label">Duration</span>
+            <span class="col-value">${fmtDuration(s.durationMs)}</span>
+          </div>
+          <div class="col">
+            <span class="col-label">Sensitive events</span>
+            <span class="col-value sensitive">${s.sensitiveCount}</span>
+          </div>
+          <div class="badge-cell">${levelBadge(s.maxLevel)}</div>
+        </div>`).join("");
+
+      return `<div class="project-group">
+        <div class="project-head">
+          <span class="project-name">${escHtml(g.project)}</span>
+          ${path}
+          <span class="project-count">${g.sessions.length} session${g.sessions.length === 1 ? "" : "s"}</span>
         </div>
-        <div class="events-panel ${isExpanded ? "open" : ""}" id="panel-${escHtml(s.sessionId)}">
-          <div class="events-panel-heading" style="color:var(--muted)">Click to load events…</div>
-        </div>`;
+        ${cards}
+      </div>`;
     }).join("");
 
-    table.innerHTML = header + rows;
-
-    // Reload events for any previously-expanded sessions
-    for (const id of expandedSessions) {
-      loadSessionEvents(id);
+    // Click hook for the per-session timeline (TASK-008).
+    for (const card of root.querySelectorAll(".session-card")) {
+      card.addEventListener("click", () => {
+        // Timeline view lands in TASK-008; affordance wired up now.
+        console.log("open session", card.dataset.sessionId);
+      });
     }
   }
 
-  function renderStats(stats) {
-    document.getElementById("stat-sessions").textContent    = stats.totalSessions    ?? "—";
-    document.getElementById("stat-intercepted").textContent = stats.totalIntercepted ?? "—";
-    document.getElementById("stat-blocked").textContent     = stats.totalBlocked     ?? "—";
-    document.getElementById("stat-approved").textContent    = stats.totalApproved    ?? "—";
-  }
+  // ── filters ──
+  document.getElementById("filters").addEventListener("click", (e) => {
+    const btn = e.target.closest(".filter-btn");
+    if (!btn) return;
+    currentRange = btn.dataset.range;
+    for (const b of document.querySelectorAll(".filter-btn")) {
+      b.classList.toggle("active", b === btn);
+    }
+    refresh();
+  });
 
-  // ── polling ───────────────────────────────────────────────────────────────────
+  // ── polling ──
   async function refresh() {
     try {
-      const [stats, sessions] = await Promise.all([
-        fetchJson("/api/stats"),
-        fetchJson("/api/sessions"),
+      const [status, data] = await Promise.all([
+        fetchJson("/api/daemon-status"),
+        fetchJson("/api/sessions?range=" + currentRange),
       ]);
-      renderStats(stats);
-      renderSessions(sessions);
+      renderDaemon(status.running);
+      renderProjects(data.projects);
     } catch (err) {
       console.warn("Dashboard refresh failed:", err.message);
     }

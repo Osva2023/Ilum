@@ -101,7 +101,8 @@
 **Files:** `src/dashboard/server.js`, `src/dashboard/public/index.html`  
 **Scope:** El dashboard actual existe pero es básico. Rediseñar la vista principal para mostrar: lista de sesiones agrupadas por watchPath/proyecto, con duración, cantidad de eventos, y timestamp. Filtro por "hoy", "últimos 7 días", "últimos 30 días".  
 **Acceptance:** `agentguard dashboard` abre en localhost:3000 y muestra sesiones del daemon agrupadas por proyecto con duración legible.  
-**Status:** TODO
+**Status:** DONE  
+**Nota:** Dashboard corre en `localhost:7429` (no 3000). El proyecto se deriva del primer segmento del `file` del audit log porque el log no guarda `watchPath`/`project`. Limitación conocida: archivos en la raíz del proyecto vigilado (p.ej. `package.json`) aparecen como su propio "proyecto" al no tener directorio padre. Fix real: loguear un campo `project`/`watchPath` explícito (candidato para TASK-009).
 
 ---
 
