@@ -587,6 +587,12 @@ test("sendSystemNotification → HIGH on darwin spawns osascript with correct ar
     assert.strictEqual(calls[0].cmd, "osascript");
     assert.strictEqual(calls[0].argv[0], "-e");
     const script = calls[0].argv[1];
+    // Notification must be attributed to System Events (faceless background agent)
+    // so a click never opens Script Editor. (TASK-003)
+    assert.ok(
+      script.startsWith('tell application "System Events" to display notification'),
+      `script should route through System Events: ${script}`,
+    );
     assert.ok(script.includes("🔶 AgentGuard HIGH"), `script missing HIGH prefix: ${script}`);
     assert.ok(script.includes("— .env"), `script missing title context: ${script}`);
     assert.ok(script.includes("modified by claude"), `script missing message: ${script}`);

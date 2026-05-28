@@ -354,8 +354,13 @@ export function sendSystemNotification({ title, message, level }, config, opts =
   const escape = (s) =>
     String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n]+/g, " ");
 
+  // Attribute the notification to System Events — a faceless background agent
+  // with no windows — instead of letting osascript run under Script Editor.
+  // Otherwise clicking the banner (or its "Show" button) activates Script Editor
+  // and opens an empty document window. System Events has nothing to bring to the
+  // front, so the click is inert and nothing unexpected opens. (TASK-003)
   const script =
-    `display notification "${escape(message)}" with title "${escape(fullTitle)}"`;
+    `tell application "System Events" to display notification "${escape(message)}" with title "${escape(fullTitle)}"`;
   const argv = ["-e", script];
 
   const spawnFn = opts.spawnFn ?? spawn;

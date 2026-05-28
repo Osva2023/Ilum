@@ -27,7 +27,7 @@
 **Files:** `test/*.test.js`, `src/logger.js`  
 **Scope:** Los tests unitarios escriben eventos al `~/.agentguard/audit.log` real durante `npm test`. Esto contamina el log con entradas falsas (R1, Exfil, my-rule, Pattern fired). Solución: que logger.js detecte cuando está en modo test (NODE_ENV=test o variable similar) y use un log path temporal (`/tmp/agentguard-test-{random}.log`) que se descarta al terminar.  
 **Acceptance:** Después de `npm test`, el audit log real no tiene nuevas entradas. Los tests siguen pasando.  
-**Status:** TODO
+**Status:** DONE
 
 ---
 
@@ -38,6 +38,18 @@
 **Files:** `src/notifier.js`, `tray/main.js`  
 **Scope:** Cuando el usuario hace click en "Show" de una notificación macOS, se abre el Script Editor vacío. Debería abrir la tray app o simplemente no hacer nada. Investigar si es posible asociar la notificación con la tray app usando `NSUserNotificationCenter` o simplemente eliminar el botón "Show" de las notificaciones.  
 **Acceptance:** Click en notificación macOS no abre el Script Editor.  
+**Status:** DONE  
+**Resolución:** La notificación ahora se emite vía `tell application "System Events" to display notification` en `src/notifier.js`. System Events es un agente de fondo sin ventanas, así que el click queda inerte y no abre Script Editor. No es posible quitar el botón "Show" vía osascript; la solución correcta es controlar la app emisora. Ver follow-up TASK-003b para un destino de click útil.
+
+---
+
+### TASK-003b — Notificaciones vía tray Electron con click → dashboard
+**Epic:** Estabilización / Dashboard  
+**Prioridad:** Media  
+**Dificultad:** Media (medio día)  
+**Files:** `tray/main.js`, `src/notifier.js`, IPC daemon↔tray  
+**Scope:** Enrutar las notificaciones del daemon a través de la app Electron del tray (que ya corre en el menu bar) usando la `Notification` API de Electron en vez de `osascript`. Así la notificación queda atribuida a "AgentGuard" (no a Script Editor / System Events) y su handler `click` puede abrir algo útil: enfocar el popup del tray o abrir el dashboard en `localhost:3000`. Requiere un canal IPC daemon→tray (p.ej. archivo/socket que el tray observa, o el daemon dispara la notificación si el tray está corriendo). Fallback a `osascript` (comportamiento actual) cuando el tray no está activo.  
+**Acceptance:** Click en una notificación de AgentGuard abre el dashboard (o el popup del tray), no Script Editor ni un no-op. Encaja con TASK-007/008.  
 **Status:** TODO
 
 ---
