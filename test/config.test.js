@@ -2,11 +2,12 @@
  * test/config.test.js — plain Node.js, no external test runner
  */
 import assert from "assert";
-import { writeFileSync, mkdirSync, rmSync } from "fs";
+import { writeFileSync, readFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
+import { tmpdir, homedir } from "os";
 
-const { loadConfig, mergeConfig, DEFAULT_CONFIG } = await import("../src/config.js");
+const { loadConfig, mergeConfig, DEFAULT_CONFIG, addWatchPath, expandPath } =
+  await import("../src/config.js");
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -103,6 +104,58 @@ test("notifications.email partial smtp override keeps other smtp defaults (TASK-
   assert.strictEqual(cfg.notifications.email.to, "me@x.com");
   // Telegram defaults untouched by an email-only override.
   assert.strictEqual(cfg.notifications.telegram.enabled, false);
+});
+
+console.log("\naddWatchPath():  (TASK-015)");
+
+test("expandPath — expands ~ and resolves to absolute", () => {
+  assert.strictEqual(expandPath("~"), homedir());
+  assert.strictEqual(expandPath("~/x"), join(homedir(), "x"));
+  assert.strictEqual(expandPath("/abs/path"), "/abs/path");
+  assert.strictEqual(expandPath(""), null);
+});
+
+test("adds a new valid directory and writes config", () => {
+  const dir = makeTmp();
+  const cfgPath = join(dir, "config.json");
+  const r = addWatchPath(cfgPath, dir);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.status, "added");
+  assert.deepStrictEqual(r.watchPaths, [dir]);
+  assert.deepStrictEqual(JSON.parse(readFileSync(cfgPath, "utf8")).watchPaths, [dir]);
+  rmSync(dir, { recursive: true });
+});
+
+test("does not duplicate an already-present path", () => {
+  const dir = makeTmp();
+  const cfgPath = join(dir, "config.json");
+  addWatchPath(cfgPath, dir);
+  const r = addWatchPath(cfgPath, dir);
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.status, "exists");
+  assert.strictEqual(JSON.parse(readFileSync(cfgPath, "utf8")).watchPaths.length, 1);
+  rmSync(dir, { recursive: true });
+});
+
+test("rejects a non-existent / non-directory path", () => {
+  const dir = makeTmp();
+  const cfgPath = join(dir, "config.json");
+  const r = addWatchPath(cfgPath, join(dir, "does-not-exist"));
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.status, "invalid");
+  rmSync(dir, { recursive: true });
+});
+
+test("preserves other config keys when adding a path", () => {
+  const dir = makeTmp();
+  const cfgPath = join(dir, "config.json");
+  writeFileSync(cfgPath, JSON.stringify({ autoDeny: ["CRITICAL"], watchPaths: [] }));
+  const r = addWatchPath(cfgPath, dir);
+  assert.strictEqual(r.ok, true);
+  const written = JSON.parse(readFileSync(cfgPath, "utf8"));
+  assert.deepStrictEqual(written.autoDeny, ["CRITICAL"]);
+  assert.deepStrictEqual(written.watchPaths, [dir]);
+  rmSync(dir, { recursive: true });
 });
 
 console.log(`\n${failed === 0 ? "All tests passed." : `${failed} test(s) FAILED.`}`);

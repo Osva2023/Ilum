@@ -202,7 +202,8 @@
 **Files:** `bin/agentguard`, `src/config.js`  
 **Scope:** Shortcut para agregar un watchPath sin correr el wizard completo. `agentguard add-path /ruta/al/proyecto` agrega el path al config y reinicia el daemon si está corriendo.  
 **Acceptance:** `agentguard add-path ~/proyectos/nuevo-app` agrega el path y el daemon empieza a vigilarlo sin reinicio manual.  
-**Status:** TODO
+**Status:** DONE  
+**Nota:** `config.js`: `addWatchPath(configPath, newPath)` (+ `expandPath`) — expande ~, valida que sea directorio existente, lee config, agrega solo si no está ya (compara en absoluto, dedupe ~ vs abs), preserva el resto de claves, escribe; retorna `{ status:"added"|"exists"|"invalid", ok, path, watchPaths }`. `bin/agentguard`: subcomando `add-path <path>` con mensajes claros (`✓ Added …`, `! … already in watchPaths — nothing changed`, `✗ Not a directory`). Si el daemon corre, reinicia: para daemon manual hace `daemonStop()+daemonStart()`; para daemon **launchd** solo hace `daemonStop()` y deja que launchd (KeepAlive) lo respawnee con el config nuevo (evita el race/`exit(1)` de "already running"). Tests de `addWatchPath`/`expandPath` en config.test.js; verificado en vivo (HOME aislado: added/exists/invalid/no-arg; y branch "exists" contra el config real sin mutarlo).
 
 ---
 

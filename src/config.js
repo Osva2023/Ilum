@@ -23,8 +23,8 @@
  *   DEFAULT_CONFIG  →  policy pack (if set)  →  project/user config file
  */
 
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from "fs";
+import { join, resolve, dirname } from "path";
 import { homedir } from "os";
 
 // ─── policy packs ────────────────────────────────────────────────────────────
@@ -236,4 +236,63 @@ export function mergeConfig(defaults, overrides) {
     },
     watchPaths: overrides.watchPaths ?? [...defaults.watchPaths],
   };
+}
+
+// ─── watchPath mutation (agentguard add-path) ──────────────────────────────────
+
+/** Expand a leading "~" to the home directory and resolve to an absolute path. */
+export function expandPath(p) {
+  if (typeof p !== "string" || !p) return null;
+  if (p === "~" || p.startsWith("~/")) {
+    return resolve(homedir(), p === "~" ? "." : p.slice(2));
+  }
+  return resolve(p);
+}
+
+/**
+ * Add a directory to the `watchPaths` array of the config file at `configPath`.
+ * Handles the full read → validate → write cycle for `agentguard add-path`.
+ *
+ *   • `newPath` is ~-expanded and resolved to an absolute path.
+ *   • The path must exist and be a directory, else nothing is written.
+ *   • Existing entries are compared on their absolute form, so a path already
+ *     watched (even spelled differently, e.g. "~/x" vs "/home/me/x") is a no-op.
+ *   • All other config keys are preserved.
+ *
+ * @param {string} configPath  Absolute path to the JSON config file.
+ * @param {string} newPath     Directory to add (~ allowed).
+ * @returns {{ status: "added"|"exists"|"invalid", ok: boolean, path: string, watchPaths: string[] }}
+ *   `ok` is true only on "added". `path` is the resolved absolute path (or the
+ *   raw input when it could not be resolved). `watchPaths` is the resulting
+ *   list on success, or the current list otherwise.
+ */
+export function addWatchPath(configPath, newPath) {
+  const abs = expandPath(newPath);
+  if (!abs) return { status: "invalid", ok: false, path: newPath, watchPaths: [] };
+
+  // Read current config first so we can report the existing list on any outcome.
+  let cfg = {};
+  if (existsSync(configPath)) {
+    try {
+      cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    } catch {
+      cfg = {};
+    }
+  }
+  const current = Array.isArray(cfg.watchPaths)
+    ? cfg.watchPaths.filter((p) => typeof p === "string")
+    : [];
+
+  let isDir = false;
+  try { isDir = statSync(abs).isDirectory(); } catch {}
+  if (!isDir) return { status: "invalid", ok: false, path: abs, watchPaths: current };
+
+  if (current.some((p) => expandPath(p) === abs)) {
+    return { status: "exists", ok: false, path: abs, watchPaths: current };
+  }
+
+  const watchPaths = [...current, abs];
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, JSON.stringify({ ...cfg, watchPaths }, null, 2) + "\n");
+  return { status: "added", ok: true, path: abs, watchPaths };
 }

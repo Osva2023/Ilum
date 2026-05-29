@@ -51,6 +51,7 @@ ${chalk.bold("Examples:")}
 
 ${chalk.bold("Setup:")}
   agentguard init              Interactive first-run setup wizard
+  agentguard add-path <path>   Add a directory to watchPaths (restarts the daemon if running)
 
 ${chalk.bold("Daemon (background file watcher):")}
   agentguard daemon start      Start the daemon detached
@@ -87,6 +88,59 @@ ${chalk.bold("Config (optional):")}
 if (agent === "init") {
   const { runInit } = await import("../src/init.js");
   await runInit();
+  process.exit(0);
+}
+
+// ─── add-path sub-command ──────────────────────────────────────────────────────
+
+if (agent === "add-path") {
+  const target = agentArgs[0];
+  if (!target) {
+    console.error("Usage: agentguard add-path <path>");
+    process.exit(1);
+  }
+
+  const { addWatchPath } = await import("../src/config.js");
+  const os = await import("os");
+  const path = await import("path");
+  const configPath = path.join(os.homedir(), ".agentguard", "config.json");
+
+  const result = addWatchPath(configPath, target);
+
+  if (result.status === "invalid") {
+    console.error(chalk.red(`✗ Not a directory (or does not exist): ${result.path}`));
+    process.exit(1);
+  }
+  if (result.status === "exists") {
+    console.log(chalk.yellow(`! ${result.path} already in watchPaths — nothing changed`));
+    process.exit(0);
+  }
+
+  // status === "added"
+  console.log(chalk.green(`✓ Added ${result.path} to watchPaths`));
+
+  // Restart the daemon so it picks up the new path immediately (if running).
+  const { isDaemonRunning, daemonStop, daemonStart } = await import("../src/daemon-control.js");
+  if (isDaemonRunning()) {
+    const n = result.watchPaths.length;
+    // When the daemon is launchd-managed (KeepAlive=true), stopping it makes
+    // launchd respawn it automatically with the updated config. Calling
+    // daemonStart() in that case would race the respawn and abort on "already
+    // running", so we only start it ourselves for a manually-run daemon.
+    const fs2 = await import("fs");
+    const plist = path.join(os.homedir(), "Library", "LaunchAgents", "com.agentguard.daemon.plist");
+    const launchdManaged = fs2.existsSync(plist);
+
+    await daemonStop();
+    if (launchdManaged) {
+      console.log(chalk.green(`✓ Daemon will be respawned by launchd — now watching ${n} path${n === 1 ? "" : "s"}`));
+    } else {
+      await daemonStart();
+      console.log(chalk.green(`✓ Daemon restarted — now watching ${n} path${n === 1 ? "" : "s"}`));
+    }
+  } else {
+    console.log(chalk.gray("  Daemon not running — run `agentguard daemon start` to begin watching."));
+  }
   process.exit(0);
 }
 
