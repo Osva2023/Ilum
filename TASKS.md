@@ -190,7 +190,8 @@
 **Files:** `src/init.js`  
 **Scope:** El wizard de `agentguard init` debería poder agregar nuevos watchPaths a una configuración existente sin sobreescribir los anteriores. Actualmente hace un merge pero la UX no es clara. Mejorar el flujo: mostrar los paths actuales, permitir agregar nuevos, confirmar antes de escribir.  
 **Acceptance:** `agentguard init` en un sistema ya configurado muestra los paths existentes y permite agregar nuevos sin perder los anteriores.  
-**Status:** TODO
+**Status:** DONE  
+**Nota:** Reescrito solo el branch de config existente en `src/init.js`: muestra "Current watched paths", pregunta "Add more paths? [y/N]"; si sí, recolecta paths (valida que sean directorios, sin fallback a cwd, descarta los ya vigilados con aviso "already watched (skipped)"), confirma "Add X new path(s)? [Y/n]" y solo entonces escribe el merge (existentes + nuevos). "Nothing to add." si no hay nuevos. El flujo de instalación nueva (paths→agentes→aliases→daemon) queda intacto. Helpers puros exportados y testeados: `parseWatchPaths`, `filterNewPaths` (`test/init.test.js`, agregado a la cadena `test`). Verificado en vivo contra el config real (flujos decline / empty / already-watched, sin mutar el config).
 
 ---
 

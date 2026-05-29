@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "start": "node bin/agentguard",
-    "test": "export NODE_ENV=test && node test/classifier.test.js && node test/notifier.test.js && node test/config.test.js && node test/event-bus.test.js && node --test test/decoder.test.js && node --test test/suppression.test.js && node --test test/correlator.test.js && node --test test/enforcement.test.js && node --test test/snapshot-restore.test.js && node --test test/filewatcher-dedup.test.js && node --test test/report.test.js && node --test test/daily-report.test.js && node --test test/tray-control.test.js && node --test test/dashboard.test.js && node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
+    "test": "export NODE_ENV=test && node test/classifier.test.js && node test/notifier.test.js && node test/config.test.js && node test/event-bus.test.js && node --test test/decoder.test.js && node --test test/suppression.test.js && node --test test/correlator.test.js && node --test test/enforcement.test.js && node --test test/snapshot-restore.test.js && node --test test/filewatcher-dedup.test.js && node --test test/report.test.js && node --test test/daily-report.test.js && node --test test/init.test.js && node --test test/tray-control.test.js && node --test test/dashboard.test.js && node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
     "test:classifier": "NODE_ENV=test node test/classifier.test.js",
     "test:notifier": "NODE_ENV=test node test/notifier.test.js",
     "test:jest": "NODE_ENV=test node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
