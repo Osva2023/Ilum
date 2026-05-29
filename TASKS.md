@@ -137,7 +137,8 @@
 **Files:** `src/dashboard/server.js`, `src/dashboard/public/index.html`  
 **Scope:** Sección "Most touched sensitive files" — lista de archivos sensibles ordenados por frecuencia de modificación en el período seleccionado. Útil para identificar qué archivos el agente toca más.  
 **Acceptance:** Puedo ver que `.env.local` fue modificado 8 veces en los últimos 4 días.  
-**Status:** TODO
+**Status:** DONE  
+**Nota:** Nuevo endpoint `GET /api/top-files?range=today|7d|30d` (`topSensitiveFiles`/`sensitiveFileOf` en `server.js`) que cuenta los `command_intercepted` del file watcher (evento canónico de toque; review_kept/file_restore son follow-ups y se omiten para no contar doble), ordenados por frecuencia desc, máx 10, con `{ file, count, maxLevel, lastSeen }`. UI: tabla "Most touched sensitive files" debajo de la lista de sesiones, se refresca con el filtro de rango, "(none in this period)" si vacío. Verificado en vivo contra el audit log real.
 
 ---
 

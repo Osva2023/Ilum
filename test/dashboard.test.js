@@ -7,6 +7,8 @@ import {
   higherLevel,
   withinRange,
   groupByProject,
+  sensitiveFileOf,
+  topSensitiveFiles,
 } from "../src/dashboard/server.js";
 
 test("projectOf — leading path segment is the project", () => {
@@ -47,6 +49,45 @@ test("groupByProject — watchPath attributes file-less events to the right proj
   assert.strictEqual(g.sessions.length, 1);
   assert.strictEqual(g.sessions[0].sensitiveCount, 2);
   assert.strictEqual(g.sessions[0].maxLevel, "HIGH");
+});
+
+test("sensitiveFileOf — parses path from command_intercepted only (TASK-010)", () => {
+  assert.strictEqual(sensitiveFileOf({ event: "command_intercepted", command: "modified: .env.local" }), ".env.local");
+  assert.strictEqual(sensitiveFileOf({ event: "command_intercepted", command: "created: src/keys.pem" }), "src/keys.pem");
+  assert.strictEqual(sensitiveFileOf({ event: "command_intercepted", command: "deleted: a/b/c.key" }), "a/b/c.key");
+  // Follow-up / unrelated events are not counted.
+  assert.strictEqual(sensitiveFileOf({ event: "review_kept", file: ".env" }), null);
+  assert.strictEqual(sensitiveFileOf({ event: "session_start" }), null);
+  assert.strictEqual(sensitiveFileOf(null), null);
+});
+
+test("topSensitiveFiles — counts, ranks by frequency, respects range (TASK-010)", () => {
+  const now = Date.parse("2026-05-28T12:00:00Z");
+  const ago = (days) => new Date(now - days * 86400000).toISOString();
+  const events = [
+    { event: "command_intercepted", command: "modified: .env.local", level: "WARN", ts: ago(3) },
+    { event: "command_intercepted", command: "modified: .env.local", level: "HIGH", ts: ago(2) },
+    { event: "command_intercepted", command: "modified: .env.local", level: "WARN", ts: ago(1) },
+    { event: "command_intercepted", command: "modified: package.json", level: "WARN", ts: ago(2) },
+    { event: "command_intercepted", command: "modified: old.pem", level: "CRITICAL", ts: ago(20) }, // outside 7d
+    { event: "session_start", ts: ago(1) },
+  ];
+  const top = topSensitiveFiles(events, "7d", now);
+  assert.strictEqual(top.length, 2, "old.pem excluded by 7d range; session_start ignored");
+  assert.strictEqual(top[0].file, ".env.local");
+  assert.strictEqual(top[0].count, 3);
+  assert.strictEqual(top[0].maxLevel, "HIGH");
+  assert.strictEqual(top[0].lastSeen, ago(1));
+  assert.strictEqual(top[1].file, "package.json");
+  assert.strictEqual(top[1].count, 1);
+});
+
+test("topSensitiveFiles — caps the list at 10 (TASK-010)", () => {
+  const events = [];
+  for (let i = 0; i < 15; i++) {
+    events.push({ event: "command_intercepted", command: `modified: f${i}.env`, level: "WARN", ts: "2026-05-28T10:00:00Z" });
+  }
+  assert.strictEqual(topSensitiveFiles(events, "all").length, 10);
 });
 
 test("higherLevel — picks the more severe level", () => {

@@ -209,6 +209,32 @@
     .tl-action.rolled { color: #4fc3f7; }
     .tl-action.none { color: var(--muted); }
 
+    /* ── most touched sensitive files (TASK-010) ── */
+    .top-files-section { margin-top: 36px; }
+    .section-title { font-size: 15px; font-weight: bold; color: var(--text); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .top-files { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .tf-header, .tf-row {
+      display: grid;
+      grid-template-columns: 1fr 110px 110px 160px;
+      gap: 12px;
+      padding: 9px 16px;
+      align-items: baseline;
+    }
+    .tf-header {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-bottom: 1px solid var(--border);
+    }
+    .tf-row { border-bottom: 1px solid #1f1f1f; font-size: 12px; }
+    .tf-row:last-child { border-bottom: none; }
+    .tf-row:hover { background: rgba(124,107,255,0.05); }
+    .tf-file { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tf-count { color: var(--accent); font-weight: bold; }
+    .tf-last { color: var(--muted); }
+    .tf-empty { padding: 20px; text-align: center; color: var(--muted); }
+
     .hidden { display: none; }
 
     /* ── empty state ── */
@@ -252,6 +278,14 @@
 
     <div id="projects">
       <div class="empty-state"><div class="big">📋</div><p>Loading…</p></div>
+    </div>
+
+    <!-- Most touched sensitive files (TASK-010) -->
+    <div class="top-files-section">
+      <div class="section-title">Most touched sensitive files</div>
+      <div class="top-files" id="top-files">
+        <div class="tf-empty">Loading…</div>
+      </div>
     </div>
   </div>
 
@@ -427,6 +461,26 @@
     }
   }
 
+  // ── most touched sensitive files (TASK-010) ──
+  function renderTopFiles(files) {
+    const root = document.getElementById("top-files");
+    if (!files || files.length === 0) {
+      root.innerHTML = `<div class="tf-empty">(none in this period)</div>`;
+      return;
+    }
+    const header = `<div class="tf-header">
+      <span>File</span><span>Touched</span><span>Max level</span><span>Last seen</span>
+    </div>`;
+    const rows = files.map((f) => `
+      <div class="tf-row">
+        <span class="tf-file" title="${escHtml(f.file)}">${escHtml(f.file)}</span>
+        <span class="tf-count">${f.count}</span>
+        <span>${levelBadge(f.maxLevel)}</span>
+        <span class="tf-last">${escHtml(fmtStartLocal(f.lastSeen))}</span>
+      </div>`).join("");
+    root.innerHTML = header + rows;
+  }
+
   // ── session detail / timeline ──
   let openSessionId = null;
 
@@ -559,6 +613,12 @@
       renderFiltered();
     } catch (err) {
       console.warn("Dashboard refresh failed:", err.message);
+    }
+    try {
+      const tf = await fetchJson("/api/top-files?range=" + currentRange);
+      renderTopFiles(tf.files);
+    } catch (err) {
+      console.warn("Top files refresh failed:", err.message);
     }
   }
 

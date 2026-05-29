@@ -106,6 +106,54 @@ export function withinRange(ts, range, now = Date.now()) {
 }
 
 /**
+ * Extract the sensitive-file path from a touch event, or null if the event is
+ * not a sensitive-file touch.
+ *
+ * The file watcher logs each sensitive touch as a `command_intercepted` entry
+ * whose `command` reads "<verb>: <path>" (verb ∈ created/modified/deleted) —
+ * see logIntercepted() in filewatcher.js. This is the canonical touch event,
+ * so we count only those: review_kept / file_restore / telegram_keep are
+ * downstream follow-ups to the same touch and would double-count.
+ */
+export function sensitiveFileOf(e) {
+  if (!e || e.event !== "command_intercepted" || typeof e.command !== "string") {
+    return null;
+  }
+  const m = e.command.match(/^(?:created|modified|deleted):\s*(.+)$/);
+  const file = (m ? m[1] : e.command).trim();
+  return file || null;
+}
+
+/**
+ * Rank sensitive files by how many times they were touched within `range`.
+ * Returns up to `limit` entries, most-touched first (ties broken by recency).
+ * Each entry: { file, count, maxLevel, lastSeen }.
+ */
+export function topSensitiveFiles(events, range, now = Date.now(), limit = 10) {
+  const byFile = new Map();
+  for (const e of events) {
+    if (!withinRange(e.ts, range, now)) continue;
+    const file = sensitiveFileOf(e);
+    if (!file) continue;
+    let rec = byFile.get(file);
+    if (!rec) {
+      rec = { file, count: 0, maxLevel: null, lastSeen: null };
+      byFile.set(file, rec);
+    }
+    rec.count++;
+    if (e.level) rec.maxLevel = higherLevel(rec.maxLevel, e.level);
+    if (e.ts && (!rec.lastSeen || e.ts > rec.lastSeen)) rec.lastSeen = e.ts;
+  }
+  return [...byFile.values()]
+    .sort(
+      (a, b) =>
+        b.count - a.count ||
+        new Date(b.lastSeen || 0) - new Date(a.lastSeen || 0)
+    )
+    .slice(0, limit);
+}
+
+/**
  * Resolve the project an event belongs to, returning { project, fullPath } or
  * null when the event has no project context.
  *
@@ -333,6 +381,13 @@ function buildRouter() {
     const events = readAuditLog().filter((e) => withinRange(e.ts, range));
     const watchPaths = loadConfig().watchPaths;
     res.json({ range, projects: groupByProject(events, watchPaths) });
+  });
+
+  // Most-touched sensitive files within ?range=today|7d|30d (default 7d) — TASK-010.
+  router.get("/top-files", (req, res) => {
+    const range = req.query.range || "7d";
+    const events = readAuditLog();
+    res.json({ range, files: topSensitiveFiles(events, range) });
   });
 
   // Single session with full event list (used by the timeline view — TASK-008).
