@@ -126,7 +126,7 @@
 **Scope:** Selector de proyecto en la parte superior del dashboard. Muestra solo los eventos del path seleccionado. Default: todos los proyectos.  
 **Acceptance:** Puedo ver solo los eventos de `mainstreetaiaudit` sin ver los de otros proyectos.  
 **Status:** DONE  
-**Nota:** Dos partes. (1) `src/logger.js` ahora loguea un campo `watchPath` (raíz vigilada absoluta) en los eventos `command_intercepted` e `incident_detected` del file watcher (`src/filewatcher.js` pasa `cwd`); esto resuelve la limitación de TASK-007 (proyecto derivado del primer segmento del `file`). (2) Dashboard: nuevo endpoint `GET /api/projects`, `groupByProject` ahora prefiere `watchPath` sobre `file`, y selector "All projects" + uno por proyecto en la barra superior (filtro client-side). Verificado en vivo (`/api/projects` y `/api/sessions` respondiendo contra el audit log real). Las entradas previas al cambio no tienen `watchPath`, así que solo los eventos nuevos se agrupan de forma confiable.
+**Nota:** watchPath logueado en audit log desde esta versión. Eventos anteriores sin watchPath siguen con agrupación por nombre de archivo.
 
 ---
 
