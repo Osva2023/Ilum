@@ -38,7 +38,7 @@ const [agent, ...agentArgs] = filteredArgs;
 
 if (!agent || agent === "--help" || agent === "-h") {
   console.log(`
-${chalk.bold.cyan("AgentGuard")} ${chalk.gray("v0.3.0")} — Universal AI agent shell wrapper
+${chalk.bold.cyan("Ilum")} ${chalk.gray("v1.0.0")} ${chalk.gray("(formerly AgentGuard)")} — watches what your AI agents do
 
 ${chalk.bold("Usage:")}
   agentguard [--audit-only] <agent> [agent-args...]
