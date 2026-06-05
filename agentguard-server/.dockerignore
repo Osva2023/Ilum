@@ -1,0 +1,7 @@
+# Never copy the host's node_modules into the image — its native modules are
+# compiled for the host OS/arch (e.g. macOS arm64) and would overwrite the
+# Linux build that `npm ci` produces, breaking the addon at runtime (502).
+node_modules/
+data/
+npm-debug.log
+.DS_Store

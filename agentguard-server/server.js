@@ -40,13 +40,13 @@ function requireAuth(req, res, next) {
 }
 
 // ── POST /api/events ── receive one event from a daemon ──
-app.post("/api/events", requireAuth, (req, res) => {
+app.post("/api/events", requireAuth, async (req, res) => {
   const evt = req.body;
   if (!evt || typeof evt !== "object" || Array.isArray(evt)) {
     return res.status(400).json({ error: "body must be a JSON event object" });
   }
   try {
-    const id = insertEvent(evt);
+    const id = await insertEvent(evt);
     res.status(201).json({ ok: true, id: Number(id) });
   } catch (err) {
     console.error("[agentguard-server] insert failed:", err.message);
@@ -55,11 +55,11 @@ app.post("/api/events", requireAuth, (req, res) => {
 });
 
 // ── GET /api/events?range=today|7d|30d&machine=all|hostname ──
-app.get("/api/events", requireAuth, (req, res) => {
+app.get("/api/events", requireAuth, async (req, res) => {
   const range = String(req.query.range || "7d");
   const machine = String(req.query.machine || "all");
   try {
-    const events = queryEvents({ range, machine });
+    const events = await queryEvents({ range, machine });
     res.json({ events });
   } catch (err) {
     console.error("[agentguard-server] query failed:", err.message);
@@ -68,9 +68,9 @@ app.get("/api/events", requireAuth, (req, res) => {
 });
 
 // ── GET /api/machines ── active machines with counts ──
-app.get("/api/machines", requireAuth, (req, res) => {
+app.get("/api/machines", requireAuth, async (req, res) => {
   try {
-    res.json({ machines: listMachines() });
+    res.json({ machines: await listMachines() });
   } catch (err) {
     console.error("[agentguard-server] machines failed:", err.message);
     res.status(500).json({ error: "failed to list machines" });
@@ -78,9 +78,9 @@ app.get("/api/machines", requireAuth, (req, res) => {
 });
 
 // ── GET /api/health ── no auth ──
-app.get("/api/health", (req, res) => {
+app.get("/api/health", async (req, res) => {
   let events = 0;
-  try { events = countEvents(); } catch { /* db may be mid-init */ }
+  try { events = await countEvents(); } catch { /* db may be mid-init */ }
   res.json({ status: "ok", events });
 });
 
