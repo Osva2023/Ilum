@@ -320,7 +320,9 @@ Parte 3 — Prueba con segunda máquina:
 
 **Acceptance:** El dashboard en Railway muestra eventos en 
 tiempo real de dos máquinas distintas con su hostname.  
-**Status:** TODO
+**Status:** DONE — Team Plan verificado en producción con dos máquinas 
+(Greys-Mac-mini.local y MacBookPro.lan) sincronizando eventos al 
+servidor central en Railway.
 
 ---
 
