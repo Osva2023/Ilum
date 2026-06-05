@@ -21,6 +21,9 @@
  *   ruleId:    correlation rule id — present when the incident originated from a
  *              fired correlation rule; omitted otherwise
  *   reason:    rule reason string — omitted when SAFE or for session events
+ *   watchPath: absolute watched root the file belongs to — present on
+ *              file-watcher events (command_intercepted / incident_detected);
+ *              lets the dashboard attribute a session to a project reliably
  *   agent:     name of the wrapped agent (e.g. "codex", "claude")
  * }
  */
@@ -32,8 +35,17 @@ import crypto from "crypto";
 
 // ─── paths ───────────────────────────────────────────────────────────────────
 
-const AGENTGUARD_DIR = path.join(os.homedir(), ".agentguard");
-const LOG_FILE = path.join(AGENTGUARD_DIR, "audit.log");
+// Under test (NODE_ENV=test or AGENTGUARD_TEST=1) the audit log is redirected to
+// a throwaway file in the OS temp dir so unit tests never pollute the user's real
+// ~/.agentguard/audit.log. The temp file is per-process and safe to discard.
+const IS_TEST = process.env.NODE_ENV === "test" || process.env.AGENTGUARD_TEST === "1";
+
+const AGENTGUARD_DIR = IS_TEST
+  ? path.join(os.tmpdir(), "agentguard-test")
+  : path.join(os.homedir(), ".agentguard");
+const LOG_FILE = IS_TEST
+  ? path.join(AGENTGUARD_DIR, `audit-${crypto.randomBytes(6).toString("hex")}.log`)
+  : path.join(AGENTGUARD_DIR, "audit.log");
 
 // ─── session id ──────────────────────────────────────────────────────────────
 
@@ -69,6 +81,8 @@ export function setSink(fn) {
  * Append one JSON-lines entry to the audit log (sync, fire-and-forget style).
  *
  * @param {Object} fields - Arbitrary key/value pairs merged into the entry.
+ * @returns {Object|null} The full entry that was written (so callers can forward
+ *   the exact same object elsewhere, e.g. syncToServer), or null on failure.
  */
 export function log(fields) {
   try {
@@ -78,9 +92,11 @@ export function log(fields) {
       ...fields,
     };
     _sink(JSON.stringify(entry) + "\n");
+    return entry;
   } catch (err) {
     // Logging must never crash the main process.
     process.stderr.write(`[AgentGuard] logger error: ${err.message}\n`);
+    return null;
   }
 }
 
@@ -98,8 +114,15 @@ export function logSnapshot(stashRef) {
   log({ event: "snapshot_created", stashRef });
 }
 
-export function logIntercepted({ command, level, reason, agent }) {
-  log({ event: "command_intercepted", command, level, reason, agent });
+export function logIntercepted({ command, level, reason, agent, watchPath }) {
+  return log({
+    event: "command_intercepted",
+    command,
+    level,
+    reason,
+    ...(watchPath !== undefined && { watchPath }),
+    agent,
+  });
 }
 
 export function logApproved({ command, level, agent }) {
@@ -124,14 +147,15 @@ export function logDenied({ command, level, agent }) {
  * @param {string} [agent]
  */
 export function logDetected(incident, agent, extras = {}) {
-  const { source, level, reason, command, ruleId } = incident;
-  log({
+  const { source, level, reason, command, ruleId, watchPath } = incident;
+  return log({
     event: "incident_detected",
     source,
     level,
     reason,
     ...(command !== undefined && { command }),
     ...(ruleId !== undefined && { ruleId }),
+    ...(watchPath !== undefined && { watchPath }),
     ...extras,
     agent,
   });
@@ -208,6 +232,44 @@ export function logFileRestore(result, ctx, agent) {
     ...(ctx.by !== undefined && { by: ctx.by }),
     agent,
   });
+}
+
+// ─── team server sync (TASK-023) ──────────────────────────────────────────────
+
+/**
+ * Forward one logged event to the central team server (agentguard-server).
+ *
+ * Fire-and-forget: returns immediately, never throws, never blocks the caller.
+ * No-op unless both config.team.serverUrl and config.team.token are set. The
+ * POST is tagged with this machine's hostname so the team dashboard can show a
+ * "machine" column. Aborts after 5s so a slow/unreachable server can't pile up.
+ *
+ * @param {Object} event   The exact entry returned by log()/logIntercepted()/logDetected().
+ * @param {Object} config  Loaded config (reads config.team.serverUrl / token).
+ */
+export function syncToServer(event, config) {
+  const team = config?.team;
+  if (!team || !team.serverUrl || !team.token || !event) return;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  const url = team.serverUrl.replace(/\/+$/, "") + "/api/events";
+  fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${team.token}`,
+    },
+    body: JSON.stringify({ ...event, machine: os.hostname() }),
+    signal: controller.signal,
+  })
+    .catch((err) => {
+      // Silent: a team-sync failure must never disrupt the daemon. Logged to
+      // stderr only, for observability.
+      process.stderr.write(`[AgentGuard] team sync failed: ${err.message}\n`);
+    })
+    .finally(() => clearTimeout(timeout));
 }
 
 export { LOG_FILE, AGENTGUARD_DIR };

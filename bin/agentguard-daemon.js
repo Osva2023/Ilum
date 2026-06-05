@@ -25,6 +25,8 @@ import path from "path";
 import chalk from "chalk";
 import { loadConfig } from "../src/config.js";
 import { startFileWatcher } from "../src/filewatcher.js";
+import { msUntilHour, buildDailyReportMessage } from "../src/daily-report.js";
+import { sendTelegramAlert } from "../src/notifier.js";
 import {
   logSessionStart,
   logSessionEnd,
@@ -127,6 +129,52 @@ const watchers = expanded.map(({ abs }) =>
   })
 );
 
+// ─── daily Telegram report (TASK-013) ──────────────────────────────────────────
+//
+// When notifications.dailyReport.enabled is true, send `agentguard report
+// --days=1` as a plain-text Telegram message once a day at the configured local
+// hour.  First fire is scheduled with setTimeout for the next occurrence of
+// that hour; thereafter a 24h setInterval keeps it going.  Note: the per-event
+// Telegram alerts were disabled above for audit-only mode, but the bot
+// credentials are preserved on `config`, and sendTelegramAlert sends on
+// credentials alone — so the daily report still goes out.
+
+let dailyReportTimeout = null;
+let dailyReportInterval = null;
+
+async function fireDailyReport() {
+  let message;
+  try {
+    message = buildDailyReportMessage();
+  } catch (err) {
+    console.error(chalk.yellow(`[AgentGuard daemon] daily report build failed: ${err.message}`));
+    return;
+  }
+  try {
+    await sendTelegramAlert({ text: message }, config);
+  } catch (err) {
+    console.error(chalk.yellow(`[AgentGuard daemon] daily report send failed: ${err.message}`));
+  }
+}
+
+const dailyReport = config.notifications?.dailyReport;
+if (dailyReport?.enabled === true) {
+  const rawHour = dailyReport.hour;
+  const hour =
+    Number.isInteger(rawHour) && rawHour >= 0 && rawHour <= 23 ? rawHour : 8;
+  const delayMs = msUntilHour(hour);
+  console.error(
+    chalk.gray(
+      `  Daily report: Telegram @ ${String(hour).padStart(2, "0")}:00 local ` +
+        `(first in ~${Math.round(delayMs / 60000)}m)`
+    )
+  );
+  dailyReportTimeout = setTimeout(() => {
+    fireDailyReport();
+    dailyReportInterval = setInterval(fireDailyReport, 24 * 60 * 60 * 1000);
+  }, delayMs);
+}
+
 // ─── graceful shutdown ───────────────────────────────────────────────────────
 
 let shuttingDown = false;
@@ -135,6 +183,8 @@ function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.error(chalk.gray(`\n[AgentGuard daemon] received ${signal}, stopping…`));
+  if (dailyReportTimeout) clearTimeout(dailyReportTimeout);
+  if (dailyReportInterval) clearInterval(dailyReportInterval);
   for (const w of watchers) {
     try { w.stop(); } catch {}
   }

@@ -105,6 +105,30 @@ async function promptWatchPaths(ask) {
   return collected;
 }
 
+// Collect zero or more existing directories from the user, one per line.
+// Unlike promptWatchPaths(), this does NOT fall back to the cwd on empty
+// input — an empty first line simply means "no paths to add". Used by the
+// "add more paths" flow for an already-configured install.
+async function collectValidDirs(ask) {
+  console.log(chalk.bold("\nEnter new paths to watch:"));
+  console.log(chalk.gray("  One path per line. Empty line to finish."));
+
+  const collected = [];
+  while (true) {
+    const line = (await ask("  > ")).trim();
+    if (!line) break;
+    const abs = expandPath(line);
+    let valid = false;
+    try { valid = fs.statSync(abs).isDirectory(); } catch {}
+    if (!valid) {
+      console.log(chalk.yellow(`    ! skipped (not a directory): ${abs}`));
+      continue;
+    }
+    collected.push(abs);
+  }
+  return collected;
+}
+
 // ─── step: aliases ───────────────────────────────────────────────────────────
 
 function existingZshrc() {
@@ -177,6 +201,54 @@ function hasExistingConfig() {
   } catch { return false; }
 }
 
+/**
+ * Parse the watchPaths array out of config JSON text.  Tolerant: returns []
+ * for malformed JSON, a missing array, or non-string entries.  Pure — exported
+ * for testing.
+ *
+ * @param {string} jsonText
+ * @returns {string[]}
+ */
+export function parseWatchPaths(jsonText) {
+  try {
+    const cfg = JSON.parse(jsonText);
+    return Array.isArray(cfg.watchPaths)
+      ? cfg.watchPaths.filter((p) => typeof p === "string" && p)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function readExistingWatchPaths() {
+  try {
+    return parseWatchPaths(fs.readFileSync(CONFIG_PATH, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Return the candidates that are not already present in `existing`, with
+ * intra-candidate duplicates removed and order preserved.  Pure — exported
+ * for testing.
+ *
+ * @param {string[]} existing
+ * @param {string[]} candidates
+ * @returns {string[]}
+ */
+export function filterNewPaths(existing, candidates) {
+  const seen = new Set(existing);
+  const out = [];
+  for (const p of candidates) {
+    if (!seen.has(p)) {
+      seen.add(p);
+      out.push(p);
+    }
+  }
+  return out;
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 export async function runInit() {
@@ -192,15 +264,62 @@ export async function runInit() {
     );
 
     if (hasExistingConfig()) {
-      const proceed = await confirmYesNo(
-        ask,
-        chalk.yellow(`\nExisting config detected at ${CONFIG_PATH} — reconfigure?`),
-        false
-      );
-      if (!proceed) {
+      // Already configured: focus on adding watch paths without overwriting the
+      // rest of the config (agents/aliases/daemon are left untouched). Existing
+      // paths are always preserved; only genuinely-new ones are appended.
+      const existingPaths = readExistingWatchPaths();
+
+      if (existingPaths.length > 0) {
+        console.log(chalk.bold("\nCurrent watched paths:"));
+        for (const p of existingPaths) console.log(`  • ${p}`);
+      } else {
+        console.log(chalk.gray("\nExisting config has no watched paths yet."));
+      }
+
+      const addMore = await confirmYesNo(ask, "\nAdd more paths?", false);
+      if (!addMore) {
         console.log(chalk.gray("Nothing changed. Run `agentguard daemon status` to verify."));
         return;
       }
+
+      const candidates = await collectValidDirs(ask);
+      const newPaths = filterNewPaths(existingPaths, candidates);
+
+      // Note any candidates dropped for being already watched / duplicated.
+      const dropped = [...new Set(candidates)].filter((p) => !newPaths.includes(p));
+      for (const p of dropped) {
+        console.log(chalk.yellow(`  ! already watched (skipped): ${p}`));
+      }
+
+      if (newPaths.length === 0) {
+        console.log(chalk.gray("Nothing to add."));
+        return;
+      }
+
+      console.log(chalk.bold("\nNew paths to add:"));
+      for (const p of newPaths) console.log(`  • ${p}`);
+
+      const confirmAdd = await confirmYesNo(
+        ask,
+        `\nAdd ${newPaths.length} new path${newPaths.length === 1 ? "" : "s"}?`,
+        true
+      );
+      if (!confirmAdd) {
+        console.log(chalk.gray("Nothing changed. Run `agentguard daemon status` to verify."));
+        return;
+      }
+
+      const merged = [...existingPaths, ...newPaths];
+      writeConfig(merged);
+
+      console.log(chalk.bold.green("\n✓ Watched paths updated"));
+      console.log(`  Config:      ${CONFIG_PATH}`);
+      console.log(`  Watching:`);
+      for (const p of merged) console.log(`    • ${p}`);
+      console.log(
+        chalk.gray("\nRestart the daemon to pick up the new paths: `agentguard daemon stop && agentguard daemon start`.")
+      );
+      return;
     }
 
     // 1. Watch paths

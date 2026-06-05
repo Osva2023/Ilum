@@ -60,18 +60,23 @@ export function isNotifierConfigured(config) {
 }
 
 /**
- * Send a Telegram alert for an intercepted risky command.
+ * Send a Telegram alert.  Two modes:
+ *   • Pass `text` to send that plain-text body verbatim (used by the daemon's
+ *     daily report — TASK-013).
+ *   • Otherwise a templated command-alert message is built from the remaining
+ *     fields (the original behaviour).
  *
  * @param {Object} params
- * @param {string} params.command    - The intercepted command string
- * @param {string} params.level      - Risk level (CRITICAL / HIGH / WARN)
- * @param {string} params.reason     - Human-readable rule reason
- * @param {string} params.sessionId  - AgentGuard session ID
- * @param {string} params.agent      - Agent name (e.g. "codex")
- * @param {object} [config]          - Merged AgentGuard config
+ * @param {string} [params.text]      - Raw message body; sent as-is when present
+ * @param {string} [params.command]   - The intercepted command string
+ * @param {string} [params.level]     - Risk level (CRITICAL / HIGH / WARN)
+ * @param {string} [params.reason]    - Human-readable rule reason
+ * @param {string} [params.sessionId] - AgentGuard session ID
+ * @param {string} [params.agent]     - Agent name (e.g. "codex")
+ * @param {object} [config]           - Merged AgentGuard config
  */
 export async function sendTelegramAlert(
-  { command, level, reason, sessionId, agent },
+  { text, command, level, reason, sessionId, agent },
   config
 ) {
   const { token, chatId, extraChatIds } = resolveCredentials(config);
@@ -85,17 +90,20 @@ export async function sendTelegramAlert(
 
   const shortSession = sessionId ? sessionId.slice(0, 8) : "unknown";
 
-  const text = [
-    "🚨 AgentGuard Alert",
-    "",
-    `Agent: ${agent}`,
-    `Session: ${shortSession}`,
-    `Risk: ${level}`,
-    `Command: ${command}`,
-    `Reason: ${reason}`,
-    "",
-    `Reply /approve_${shortSession} or /deny_${shortSession}`,
-  ].join("\n");
+  const message =
+    typeof text === "string" && text.length > 0
+      ? text
+      : [
+          "🚨 AgentGuard Alert",
+          "",
+          `Agent: ${agent}`,
+          `Session: ${shortSession}`,
+          `Risk: ${level}`,
+          `Command: ${command}`,
+          `Reason: ${reason}`,
+          "",
+          `Reply /approve_${shortSession} or /deny_${shortSession}`,
+        ].join("\n");
   const allChatIds = [chatId, ...extraChatIds].filter(Boolean);
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
 
@@ -104,7 +112,7 @@ export async function sendTelegramAlert(
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: id, text }),
+        body: JSON.stringify({ chat_id: id, text: message }),
       });
 
       if (!res.ok) {
@@ -283,6 +291,275 @@ function resolutionLineFor(outcome, by) {
   }
 }
 
+// ─── Email notifier (SMTP via nodemailer) ──────────────────────────────────────
+//
+// A second, informational-only channel.  Unlike Telegram there are no
+// Keep / Rollback buttons — the email simply reports the same facts (file,
+// level, event, session, timestamp) so an operator who is away from the
+// terminal still gets a record.  nodemailer is imported lazily so notifier.js
+// loads even when the dependency is absent and email is disabled.
+
+function getEmailConfig(config) {
+  return config?.notifications?.email ?? {};
+}
+
+/** Normalise `to` (string | string[]) into an array of non-empty addresses. */
+function normalizeRecipients(to) {
+  if (Array.isArray(to)) return to.filter((x) => typeof x === "string" && x.trim());
+  if (typeof to === "string" && to.trim()) return [to.trim()];
+  return [];
+}
+
+/** Leading path segment of a relative file path, or "" for root-level files. */
+function projectFromFile(file) {
+  if (typeof file !== "string") return "";
+  const parts = file.replace(/^\/+/, "").split("/").filter(Boolean);
+  return parts.length > 1 ? parts[0] : "";
+}
+
+/** Minimal HTML escaping for values interpolated into the email body. */
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+const LEVEL_COLOR = { CRITICAL: "#e74c3c", HIGH: "#e67e22", WARN: "#f39c12" };
+
+/**
+ * Returns true when email alerts are enabled AND a usable SMTP host and at
+ * least one recipient are configured.  Mirrors isNotifierConfigured() for
+ * Telegram — use it to guard calls to sendEmailAlert().
+ *
+ * @param {object} [config]  Merged AgentGuard config.
+ * @returns {boolean}
+ */
+export function isEmailConfigured(config) {
+  const email = getEmailConfig(config);
+  if (!email.enabled) return false;
+  const host = email.smtp?.host || "";
+  return !!(host && normalizeRecipients(email.to).length > 0);
+}
+
+/**
+ * Send an informational email alert for a sensitive file change.  No rollback
+ * buttons — this channel is one-way.  Fire-and-forget: never throws, logs send
+ * failures to stderr, and silently no-ops when email is not configured.
+ *
+ * @param {Object} params
+ * @param {string} params.file        Path (relative to the watched root)
+ * @param {string} params.level       Risk level (CRITICAL / HIGH / WARN)
+ * @param {string} params.event       "created" | "modified" | "deleted"
+ * @param {string} params.sessionId   AgentGuard session id
+ * @param {string} [params.agent]     Agent name (e.g. "claude", "daemon")
+ * @param {string} [params.project]   Project name for the subject; derived from
+ *                                     the file path when omitted.
+ * @param {object} [config]           Merged AgentGuard config.
+ * @param {object} [opts]             Test seam.
+ * @param {Function} [opts.createTransport]  Override nodemailer.createTransport.
+ * @returns {Promise<{sent: boolean, skipped?: string, subject?: string, to?: string[], error?: string}>}
+ */
+export async function sendEmailAlert(
+  { file, level, event, sessionId, agent, project },
+  config,
+  opts = {}
+) {
+  if (!isEmailConfigured(config)) return { sent: false, skipped: "not-configured" };
+
+  const email = getEmailConfig(config);
+  const smtp = email.smtp ?? {};
+  const recipients = normalizeRecipients(email.to);
+  const shortSession = sessionId ? sessionId.slice(0, 8) : "unknown";
+  const proj = project || projectFromFile(file) || "(project root)";
+  const ts = new Date().toISOString();
+  const subject = `[AgentGuard] ${level}: ${file} ${event} in ${proj}`;
+  const color = LEVEL_COLOR[level] || "#94a3b8";
+
+  const text = [
+    "AgentGuard Alert",
+    "",
+    `File:    ${file}`,
+    `Level:   ${level}`,
+    `Event:   ${event}`,
+    `Project: ${proj}`,
+    `Agent:   ${agent ?? "—"}`,
+    `Session: ${shortSession}`,
+    `Time:    ${ts}`,
+    "",
+    "Informational alert — no action is required from this email.",
+  ].join("\n");
+
+  const row = (label, value, valStyle = "") =>
+    `<tr><td style="color:#94a3b8;padding:4px 18px 4px 0;white-space:nowrap">${label}</td>` +
+    `<td style="color:#ffffff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace${valStyle}">${escapeHtml(value)}</td></tr>`;
+
+  const html =
+    `<div style="background:#0a0f1a;color:#e0e0e0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;padding:24px;border-radius:10px;border:1px solid rgba(0,229,255,0.12);max-width:560px">` +
+    `<h2 style="margin:0 0 16px;color:#00e5ff;font-size:18px">🛡 AgentGuard Alert</h2>` +
+    `<table style="border-collapse:collapse;font-size:14px">` +
+    row("File", file) +
+    row("Level", level, `;color:${color};font-weight:700`) +
+    row("Event", event) +
+    row("Project", proj) +
+    row("Agent", agent ?? "—") +
+    row("Session", shortSession) +
+    row("Time", ts) +
+    `</table>` +
+    `<p style="color:#94a3b8;font-size:12px;margin:18px 0 0;line-height:1.5">` +
+    `Informational alert — no action buttons. Manage this change via Telegram or the AgentGuard dashboard.</p>` +
+    `<p style="color:#475569;font-size:11px;margin:12px 0 0">AgentGuard by OzForce Labs</p>` +
+    `</div>`;
+
+  try {
+    let createTransport = opts.createTransport;
+    if (!createTransport) {
+      const mod = await import("nodemailer");
+      const nm = mod.default ?? mod;
+      createTransport = nm.createTransport.bind(nm);
+    }
+
+    const transport = createTransport({
+      host: smtp.host,
+      ...(smtp.port !== undefined && { port: smtp.port }),
+      secure: smtp.secure !== false, // default true
+      ...((smtp.user || smtp.pass) && { auth: { user: smtp.user, pass: smtp.pass } }),
+    });
+
+    const from = email.from || smtp.user || "agentguard@localhost";
+    await transport.sendMail({ from, to: recipients.join(", "), subject, text, html });
+    return { sent: true, subject, to: recipients };
+  } catch (err) {
+    process.stderr.write(`[AgentGuard] Email notification error: ${err.message}\n`);
+    return { sent: false, error: err.message };
+  }
+}
+
+// ─── Webhook notifiers (Slack / Discord) ───────────────────────────────────────
+//
+// Informational-only channels — no rollback buttons. Native fetch (Node 18+),
+// no extra dependencies. Each is "configured" purely by the presence of a
+// webhookUrl (no separate enable flag), mirroring how incoming webhooks work.
+
+// Discord embed colors are 24-bit integers; match the alert palette.
+const DISCORD_LEVEL_COLOR = { CRITICAL: 0xe74c3c, HIGH: 0xe67e22, WARN: 0xf39c12 };
+const DISCORD_DEFAULT_COLOR = 0x94a3b8;
+
+function getSlackWebhook(config) {
+  return config?.notifications?.slack?.webhookUrl || "";
+}
+function getDiscordWebhook(config) {
+  return config?.notifications?.discord?.webhookUrl || "";
+}
+
+/** True when a Slack incoming-webhook URL is configured. */
+export function isSlackConfigured(config) {
+  return !!getSlackWebhook(config);
+}
+
+/** True when a Discord webhook URL is configured. */
+export function isDiscordConfigured(config) {
+  return !!getDiscordWebhook(config);
+}
+
+// POST a JSON payload to a webhook. Fire-and-forget: logs failures to stderr,
+// never throws. Returns { sent } so callers/tests can assert.
+async function postWebhook(url, payload, label) {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await (res.text?.() ?? Promise.resolve("")).catch(() => "");
+      process.stderr.write(
+        `[AgentGuard] ${label} webhook failed (HTTP ${res.status}): ${body}\n`
+      );
+      return { sent: false, status: res.status };
+    }
+    return { sent: true };
+  } catch (err) {
+    process.stderr.write(`[AgentGuard] ${label} webhook error: ${err.message}\n`);
+    return { sent: false, error: err.message };
+  }
+}
+
+/**
+ * Send an informational Slack alert (Block Kit) for a sensitive file change.
+ * Silently no-ops when no webhookUrl is configured.
+ *
+ * @param {{file:string, level:string, event:string, sessionId?:string, project?:string}} params
+ * @param {object} [config]
+ * @returns {Promise<{sent:boolean, skipped?:string, status?:number, error?:string}>}
+ */
+export async function sendSlackAlert({ file, level, event, sessionId, project }, config) {
+  if (!isSlackConfigured(config)) return { sent: false, skipped: "not-configured" };
+
+  const proj = project || projectFromFile(file) || "(project root)";
+  const ts = new Date().toISOString();
+  const shortSession = sessionId ? sessionId.slice(0, 8) : "unknown";
+
+  const payload = {
+    blocks: [
+      {
+        type: "header",
+        text: { type: "plain_text", text: `[AgentGuard] ${level}: ${file} ${event}`, emoji: true },
+      },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: `*File:*\n${file}` },
+          { type: "mrkdwn", text: `*Project:*\n${proj}` },
+          { type: "mrkdwn", text: `*Level:*\n${level}` },
+          { type: "mrkdwn", text: `*Time:*\n${ts}` },
+        ],
+      },
+      {
+        type: "context",
+        elements: [{ type: "mrkdwn", text: `Session ${shortSession} · AgentGuard by OzForce Labs` }],
+      },
+    ],
+  };
+
+  return postWebhook(getSlackWebhook(config), payload, "Slack");
+}
+
+/**
+ * Send an informational Discord alert (embed) for a sensitive file change.
+ * Silently no-ops when no webhookUrl is configured.
+ *
+ * @param {{file:string, level:string, event:string, sessionId?:string, project?:string}} params
+ * @param {object} [config]
+ * @returns {Promise<{sent:boolean, skipped?:string, status?:number, error?:string}>}
+ */
+export async function sendDiscordAlert({ file, level, event, sessionId, project }, config) {
+  if (!isDiscordConfigured(config)) return { sent: false, skipped: "not-configured" };
+
+  const proj = project || projectFromFile(file) || "(project root)";
+  const ts = new Date().toISOString();
+  const shortSession = sessionId ? sessionId.slice(0, 8) : "unknown";
+
+  const payload = {
+    embeds: [
+      {
+        title: `[AgentGuard] ${level}: ${file} ${event}`,
+        color: DISCORD_LEVEL_COLOR[level] ?? DISCORD_DEFAULT_COLOR,
+        fields: [
+          { name: "File", value: String(file), inline: true },
+          { name: "Project", value: String(proj), inline: true },
+          { name: "Level", value: String(level), inline: true },
+          { name: "Time", value: ts, inline: false },
+        ],
+        footer: { text: `Session ${shortSession} · AgentGuard` },
+      },
+    ],
+  };
+
+  return postWebhook(getDiscordWebhook(config), payload, "Discord");
+}
+
 // ─── severity threshold ───────────────────────────────────────────────────────
 
 const LEVEL_ORDER = { WARN: 0, HIGH: 1, CRITICAL: 2 };
@@ -354,8 +631,13 @@ export function sendSystemNotification({ title, message, level }, config, opts =
   const escape = (s) =>
     String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n]+/g, " ");
 
+  // Attribute the notification to System Events — a faceless background agent
+  // with no windows — instead of letting osascript run under Script Editor.
+  // Otherwise clicking the banner (or its "Show" button) activates Script Editor
+  // and opens an empty document window. System Events has nothing to bring to the
+  // front, so the click is inert and nothing unexpected opens. (TASK-003)
   const script =
-    `display notification "${escape(message)}" with title "${escape(fullTitle)}"`;
+    `tell application "System Events" to display notification "${escape(message)}" with title "${escape(fullTitle)}"`;
   const argv = ["-e", script];
 
   const spawnFn = opts.spawnFn ?? spawn;

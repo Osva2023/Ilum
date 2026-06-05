@@ -245,6 +245,11 @@ export async function daemonStatus() {
       console.log(`    • ${abs ?? raw}`);
     }
   }
+
+  // Team Plan: surface central-server syncing when configured (TASK-023).
+  if (config.team?.serverUrl) {
+    console.log(`  Team sync: ${chalk.green("✓")} connected to ${config.team.serverUrl}`);
+  }
 }
 
 // ─── launchd (macOS) ─────────────────────────────────────────────────────────

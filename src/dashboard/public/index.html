@@ -8,25 +8,36 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:       #0f0f0f;
-      --surface:  #1a1a1a;
-      --border:   #2a2a2a;
-      --accent:   #7c6bff;
-      --accent2:  #5a4de0;
-      --text:     #e0e0e0;
-      --muted:    #888;
-      --critical: #ff4f4f;
-      --high:     #ff8c42;
-      --warn:     #ffd166;
-      --safe:     #06d6a0;
-      --approved: #06d6a0;
-      --blocked:  #ff4f4f;
+      /* OzForce Labs palette */
+      --bg-primary:    #0a0f1a;
+      --bg-secondary:  #0d1527;
+      --bg-card:       #111827;
+      --accent-cyan:   #00e5ff;
+      --accent-blue:   #0066ff;
+      --text-primary:  #ffffff;
+      --text-secondary:#94a3b8;
+      --border:        rgba(0, 229, 255, 0.12);
+      --border-hover:  rgba(0, 229, 255, 0.3);
+
+      /* alert levels (preserved) */
+      --critical: #e74c3c;
+      --high:     #e67e22;
+      --warn:     #f39c12;
+
+      /* status */
+      --green: #2ecc71;
+      --red:   #e74c3c;
+
+      /* effects + fonts */
+      --glow: 0 0 14px rgba(0, 229, 255, 0.22);
+      --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, "Consolas", monospace;
+      --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
     body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--sans);
       font-size: 13px;
       line-height: 1.5;
       min-height: 100vh;
@@ -39,200 +50,225 @@
       justify-content: space-between;
       padding: 16px 24px;
       border-bottom: 1px solid var(--border);
-      background: var(--surface);
+      background: var(--bg-primary);
       position: sticky;
       top: 0;
       z-index: 10;
     }
+    .logo { display: flex; align-items: baseline; gap: 9px; }
+    .logo-shield { font-size: 20px; align-self: center; }
+    .logo-text { font-size: 17px; font-weight: 700; color: var(--text-primary); letter-spacing: 0.02em; }
+    .logo-accent { color: var(--accent-cyan); }
+    .logo-tag { font-size: 11px; color: var(--text-secondary); letter-spacing: 0.04em; }
+    .header-right { display: flex; align-items: center; gap: 16px; }
+    .clock { color: var(--text-secondary); font-size: 12px; letter-spacing: 0.08em; font-family: var(--mono); }
 
-    .logo {
-      display: flex;
+    /* ── daemon status pill ── */
+    .pill {
+      display: inline-flex;
       align-items: center;
-      gap: 10px;
-      font-size: 16px;
-      font-weight: bold;
-      color: var(--accent);
+      gap: 7px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(0, 229, 255, 0.05);
+      border: 1px solid var(--border);
+      font-size: 12px;
       letter-spacing: 0.05em;
     }
-
-    .logo-shield { font-size: 20px; }
-
-    .clock {
-      color: var(--muted);
-      font-size: 12px;
-      letter-spacing: 0.08em;
-    }
+    .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary); }
+    .pill.running { color: var(--green); border-color: rgba(46, 204, 113, 0.3); }
+    .pill.running .dot { background: var(--green); animation: pulse 2s ease-in-out infinite; }
+    .pill.stopped { color: var(--red); border-color: rgba(231, 76, 60, 0.3); }
+    .pill.stopped .dot { background: var(--red); }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
     /* ── main layout ── */
     main { padding: 24px; max-width: 1100px; margin: 0 auto; }
 
-    /* ── stats bar ── */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-      margin-bottom: 28px;
+    /* ── filters ── */
+    .filters { display: flex; gap: 0; margin-bottom: 24px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; }
+    .filter-btn {
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      border: none;
+      border-right: 1px solid var(--border);
+      padding: 8px 18px;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
     }
+    .filter-btn:last-child { border-right: none; }
+    .filter-btn:hover { background: rgba(0, 229, 255, 0.08); color: var(--text-primary); box-shadow: inset var(--glow); }
+    .filter-btn.active { background: var(--accent-cyan); color: #0a0f1a; font-weight: 700; }
 
-    .stat-card {
-      background: var(--surface);
+    /* ── toolbar (filters + project selector) ── */
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+    .toolbar .filters { margin-bottom: 0; }
+    .project-select-wrap { display: flex; align-items: center; gap: 10px; }
+    .project-select-wrap label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); }
+    .project-select {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 16px 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
+      padding: 8px 12px;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
+    .project-select:hover { border-color: var(--border-hover); box-shadow: var(--glow); }
+    .project-select:focus { outline: none; border-color: var(--accent-cyan); box-shadow: var(--glow); }
 
-    .stat-label {
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
+    /* ── project group ── */
+    .project-group { margin-bottom: 28px; }
+    .project-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .project-name { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+    .project-path { font-size: 11px; color: var(--text-secondary); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .project-count { margin-left: auto; font-size: 11px; color: var(--text-secondary); flex-shrink: 0; }
+
+    /* ── session card ── */
+    .session-card {
+      display: grid;
+      grid-template-columns: 1fr 130px 150px 90px;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
     }
+    .session-card:hover { background: var(--bg-card); border-color: var(--border-hover); box-shadow: var(--glow); }
+    .session-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .session-start { color: var(--text-primary); }
+    .session-sub { color: var(--text-secondary); font-size: 11px; }
+    .session-id { color: var(--accent-cyan); font-family: var(--mono); }
+    .col { display: flex; flex-direction: column; gap: 2px; }
+    .col-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); }
+    .col-value { color: var(--text-primary); }
+    .col-value.sensitive { color: var(--warn); }
+    .badge-cell { text-align: right; }
 
-    .stat-value {
-      font-size: 28px;
-      font-weight: bold;
-      color: var(--text);
+    /* ── level badges (clean pill style) ── */
+    .level-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      border: 1px solid transparent;
     }
+    .level-CRITICAL { background: rgba(231, 76, 60, 0.15); color: var(--critical); border-color: rgba(231, 76, 60, 0.4); }
+    .level-HIGH     { background: rgba(230, 126, 34, 0.15); color: var(--high); border-color: rgba(230, 126, 34, 0.4); }
+    .level-WARN     { background: rgba(243, 156, 18, 0.15); color: var(--warn); border-color: rgba(243, 156, 18, 0.4); }
+    .level-none     { color: var(--text-secondary); font-size: 11px; }
 
-    .stat-card.sessions  .stat-value { color: var(--accent); }
-    .stat-card.intercept .stat-value { color: var(--warn); }
-    .stat-card.blocked   .stat-value { color: var(--blocked); }
-    .stat-card.approved  .stat-value { color: var(--approved); }
-
-    /* ── section heading ── */
-    .section-heading {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--muted);
-      margin-bottom: 10px;
+    /* ── session detail / timeline ── */
+    .detail-head { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+    .back-btn {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
     }
+    .back-btn:hover { background: rgba(0, 229, 255, 0.08); border-color: var(--border-hover); box-shadow: var(--glow); }
+    .detail-title { display: flex; flex-direction: column; gap: 2px; }
+    .detail-title .main { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+    .detail-title .sub { color: var(--text-secondary); font-size: 11px; font-family: var(--mono); }
 
-    /* ── sessions table ── */
-    .sessions-table {
-      background: var(--surface);
+    .timeline {
+      background: var(--bg-secondary);
       border: 1px solid var(--border);
       border-radius: 8px;
       overflow: hidden;
     }
-
-    .table-header {
+    .tl-header, .tl-row {
       display: grid;
-      grid-template-columns: 100px 90px 1fr 100px 80px 80px 80px;
-      gap: 8px;
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-
-    .session-row {
-      display: grid;
-      grid-template-columns: 100px 90px 1fr 100px 80px 80px 80px;
-      gap: 8px;
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      cursor: pointer;
-      transition: background 0.12s;
-    }
-
-    .session-row:last-child { border-bottom: none; }
-    .session-row:hover { background: rgba(124,107,255,0.08); }
-    .session-row.expanded { background: rgba(124,107,255,0.12); border-bottom: none; }
-
-    .session-id { color: var(--accent); font-size: 12px; }
-    .session-agent { color: var(--text); }
-    .session-time { color: var(--muted); font-size: 11px; }
-    .session-duration { color: var(--muted); text-align: right; }
-    .session-intercept { color: var(--warn); text-align: right; }
-    .session-blocked { color: var(--blocked); text-align: right; }
-    .session-approved { color: var(--approved); text-align: right; }
-
-    /* ── expanded event list ── */
-    .events-panel {
-      background: #111;
-      border-bottom: 1px solid var(--border);
-      padding: 12px 16px;
-      display: none;
-    }
-
-    .events-panel.open { display: block; }
-
-    .events-panel-heading {
-      color: var(--muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 8px;
-    }
-
-    .event-item {
-      display: flex;
+      grid-template-columns: 92px 130px 1fr 90px 120px;
       gap: 12px;
-      padding: 4px 0;
-      border-bottom: 1px solid #1e1e1e;
-      font-size: 12px;
+      padding: 9px 16px;
       align-items: baseline;
     }
-
-    .event-item:last-child { border-bottom: none; }
-
-    .event-ts { color: var(--muted); flex-shrink: 0; width: 90px; font-size: 11px; }
-    .event-type { flex-shrink: 0; width: 170px; }
-    .event-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    .event-type.session_start   { color: var(--accent); }
-    .event-type.session_end     { color: var(--muted); }
-    .event-type.command_intercepted { color: var(--warn); }
-    .event-type.command_approved    { color: var(--approved); }
-    .event-type.command_denied      { color: var(--blocked); }
-    .event-type.snapshot_created    { color: #4fc3f7; }
-
-    .level-badge {
-      display: inline-block;
-      padding: 1px 6px;
-      border-radius: 3px;
+    .tl-header {
+      color: var(--text-secondary);
       font-size: 10px;
-      font-weight: bold;
-      margin-left: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-bottom: 1px solid var(--border);
     }
+    .tl-row { border-bottom: 1px solid var(--border); font-size: 12px; }
+    .tl-row:last-child { border-bottom: none; }
+    .tl-row:hover { background: rgba(0, 229, 255, 0.05); }
+    .tl-time { color: var(--text-secondary); font-family: var(--mono); }
+    .tl-type { color: var(--text-primary); }
+    .tl-type.sensitive  { color: var(--accent-cyan); }
+    .tl-type.correlation { color: var(--accent-blue); }
+    .tl-detail { color: var(--text-secondary); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tl-action { font-size: 11px; }
+    .tl-action.kept, .tl-action.approved { color: var(--green); }
+    .tl-action.denied { color: var(--red); }
+    .tl-action.rolled { color: var(--accent-cyan); }
+    .tl-action.none { color: var(--text-secondary); }
 
-    .level-CRITICAL { background: var(--critical); color: #fff; }
-    .level-HIGH     { background: var(--high); color: #111; }
-    .level-WARN     { background: var(--warn); color: #111; }
+    /* ── most touched sensitive files (TASK-010) ── */
+    .top-files-section { margin-top: 36px; }
+    .section-title { font-size: 15px; font-weight: 700; color: var(--text-primary); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .top-files { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .tf-header, .tf-row {
+      display: grid;
+      grid-template-columns: 1fr 110px 110px 160px;
+      gap: 12px;
+      padding: 9px 16px;
+      align-items: baseline;
+    }
+    .tf-header {
+      color: var(--text-secondary);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-bottom: 1px solid var(--border);
+    }
+    .tf-row { font-size: 12px; transition: background 0.15s; }
+    /* zebra striping: odd rows = bg-secondary (container), even = bg-card */
+    .tf-row:nth-child(2n) { background: var(--bg-card); }
+    .tf-row:hover { background: rgba(0, 229, 255, 0.06); }
+    .tf-file { color: var(--text-primary); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tf-count { color: var(--accent-cyan); font-weight: 700; }
+    .tf-last { color: var(--text-secondary); }
+    .tf-empty { padding: 20px; text-align: center; color: var(--text-secondary); }
+
+    .hidden { display: none; }
 
     /* ── empty state ── */
-    .empty-state {
-      padding: 48px;
-      text-align: center;
-      color: var(--muted);
-    }
-
+    .empty-state { padding: 48px; text-align: center; color: var(--text-secondary); }
     .empty-state .big { font-size: 32px; margin-bottom: 12px; }
-    .empty-state p { font-size: 13px; }
+    .empty-state code { font-family: var(--mono); color: var(--accent-cyan); }
 
-    /* ── refresh indicator ── */
-    .refresh-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--safe);
-      display: inline-block;
-      margin-right: 6px;
-      animation: pulse 2s ease-in-out infinite;
+    .refresh-label { color: var(--text-secondary); font-size: 11px; }
+    .refresh-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-cyan); display: inline-block; margin-right: 6px; animation: pulse 2s ease-in-out infinite; }
+
+    /* ── footer ── */
+    footer {
+      text-align: center;
+      padding: 24px;
+      margin-top: 40px;
+      border-top: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 11px;
+      letter-spacing: 0.03em;
     }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.3; }
-    }
-
-    .refresh-label { color: var(--muted); font-size: 11px; }
+    footer a { color: var(--accent-cyan); text-decoration: none; transition: text-shadow 0.15s; }
+    footer a:hover { text-shadow: var(--glow); text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -240,215 +276,380 @@
 <header>
   <div class="logo">
     <span class="logo-shield">🛡</span>
-    AgentGuard
+    <span class="logo-text">Agent<span class="logo-accent">Guard</span></span>
+    <span class="logo-tag">by OzForce Labs</span>
   </div>
-  <div style="display:flex;align-items:center;gap:16px;">
+  <div class="header-right">
+    <span id="daemon-pill" class="pill"><span class="dot"></span><span id="daemon-text">checking…</span></span>
     <span class="refresh-label"><span class="refresh-dot"></span>auto-refresh 5s</span>
     <span class="clock" id="clock"></span>
   </div>
 </header>
 
 <main>
-  <!-- Stats bar -->
-  <div class="stats-grid">
-    <div class="stat-card sessions">
-      <div class="stat-label">Sessions</div>
-      <div class="stat-value" id="stat-sessions">—</div>
+  <!-- List view -->
+  <div id="list-view">
+    <div class="toolbar">
+      <div class="filters" id="filters">
+        <button class="filter-btn" data-range="today">Hoy</button>
+        <button class="filter-btn active" data-range="7d">Últimos 7 días</button>
+        <button class="filter-btn" data-range="30d">Últimos 30 días</button>
+      </div>
+      <div class="project-select-wrap">
+        <label for="project-select">Project</label>
+        <select id="project-select" class="project-select">
+          <option value="all">All projects</option>
+        </select>
+      </div>
     </div>
-    <div class="stat-card intercept">
-      <div class="stat-label">Intercepted</div>
-      <div class="stat-value" id="stat-intercepted">—</div>
+
+    <div id="projects">
+      <div class="empty-state"><div class="big">📋</div><p>Loading…</p></div>
     </div>
-    <div class="stat-card blocked">
-      <div class="stat-label">Blocked</div>
-      <div class="stat-value" id="stat-blocked">—</div>
-    </div>
-    <div class="stat-card approved">
-      <div class="stat-label">Approved</div>
-      <div class="stat-value" id="stat-approved">—</div>
+
+    <!-- Most touched sensitive files (TASK-010) -->
+    <div class="top-files-section">
+      <div class="section-title">Most touched sensitive files</div>
+      <div class="top-files" id="top-files">
+        <div class="tf-empty">Loading…</div>
+      </div>
     </div>
   </div>
 
-  <!-- Sessions table -->
-  <div class="section-heading">Sessions</div>
-  <div class="sessions-table" id="sessions-table">
-    <div class="empty-state">
-      <div class="big">📋</div>
-      <p>No sessions yet — start an agent with <code>agentguard &lt;agent&gt;</code></p>
+  <!-- Detail / timeline view -->
+  <div id="detail-view" class="hidden">
+    <div class="detail-head">
+      <button class="back-btn" id="back-btn">← Back</button>
+      <div class="detail-title">
+        <span class="main" id="detail-main">Session</span>
+        <span class="sub" id="detail-sub"></span>
+      </div>
     </div>
+    <div class="timeline" id="timeline"></div>
   </div>
 </main>
 
+<footer>
+  AgentGuard by OzForce Labs · <a href="https://github.com/Osva2023/AgentGuard" target="_blank" rel="noopener">github.com/Osva2023/AgentGuard</a>
+</footer>
+
 <script>
-  // ── clock ────────────────────────────────────────────────────────────────────
+  let currentRange = "7d";
+  let selectedProject = "all";   // project filter; "all" shows every project
+  let lastGroups = [];           // most recent /api/sessions project groups
+
+  // ── clock ──
   function updateClock() {
     document.getElementById("clock").textContent = new Date().toLocaleTimeString();
   }
   updateClock();
   setInterval(updateClock, 1000);
 
-  // ── helpers ──────────────────────────────────────────────────────────────────
-  function shortId(id) {
-    return id ? id.slice(0, 8) : "—";
+  // ── helpers ──
+  function escHtml(str) {
+    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
+  function shortId(id) { return id ? id.slice(0, 8) : "—"; }
 
-  function fmtTime(ts) {
+  // Local start timestamp, e.g. "May 28, 2:35:52 PM"
+  function fmtStartLocal(ts) {
     if (!ts) return "—";
     const d = new Date(ts);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    if (isNaN(d)) return "—";
+    return d.toLocaleString([], { month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
-  function fmtDuration(startTs, endTs) {
-    if (!startTs) return "—";
-    const ms = (endTs ? new Date(endTs) : new Date()) - new Date(startTs);
-    if (ms < 0) return "—";
+  // Human-readable duration, e.g. "1h 23m"
+  function fmtDuration(ms) {
+    if (!ms || ms < 0) return "—";
     const s = Math.floor(ms / 1000);
     if (s < 60) return s + "s";
-    const m = Math.floor(s / 60);
-    return m + "m " + (s % 60) + "s";
+    const days = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (days) return days + "d " + h + "h";
+    if (h)    return h + "h " + m + "m";
+    return m + "m";
   }
 
-  function eventLabel(type) {
-    return {
-      session_start:       "session_start",
-      session_end:         "session_end",
-      command_intercepted: "command_intercepted",
-      command_approved:    "command_approved",
-      command_denied:      "command_denied",
-      snapshot_created:    "snapshot_created",
-    }[type] || type;
+  function levelBadge(level) {
+    return level
+      ? `<span class="level-badge level-${level}">${level}</span>`
+      : `<span class="level-none">—</span>`;
   }
 
-  // ── fetch helpers ─────────────────────────────────────────────────────────────
+  // Local time-of-day, HH:MM:SS
+  function fmtClock(ts) {
+    if (!ts) return "—";
+    const d = new Date(ts);
+    if (isNaN(d)) return "—";
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  }
+
+  // Event → human category, with a CSS class for color.
+  function eventType(e) {
+    if (e.source === "filewatch") return { label: "Sensitive file", cls: "sensitive" };
+    if (e.source === "correlation") return { label: "Correlation", cls: "correlation" };
+    if (e.source === "command" || (e.event || "").startsWith("command_")) return { label: "Command", cls: "" };
+    if (e.event === "session_start" || e.event === "session_end") return { label: "Session", cls: "" };
+    if (e.event === "snapshot_created" || e.event === "snapshot_restore") return { label: "Snapshot", cls: "" };
+    if (e.event === "review_kept") return { label: "Sensitive file", cls: "sensitive" };
+    if (e.event === "file_restore" || e.event === "telegram_keep") return { label: "Sensitive file", cls: "sensitive" };
+    return { label: e.event || "event", cls: "" };
+  }
+
+  // What the file/command column should show.
+  function eventDetail(e) {
+    if (e.file) return e.file;
+    if (e.command) return e.command;
+    if (e.stashRef) return e.stashRef;
+    if (e.event === "session_start") return "session started" + (e.agent ? " · " + e.agent : "");
+    if (e.event === "session_end") return "session ended";
+    if (e.reason) return e.reason;       // correlation events have no file/command
+    if (e.message) return e.message;
+    return "";
+  }
+
+  // Keep / Rollback / Approved / Denied / none.
+  function eventAction(e) {
+    const by = e.by ? " by @" + e.by : "";
+    switch (e.event) {
+      case "review_kept":
+      case "telegram_keep":      return { label: "Kept" + by, cls: "kept" };
+      case "incident_approved":
+      case "command_approved":   return { label: "Approved", cls: "approved" };
+      case "incident_denied":
+      case "command_denied":     return { label: "Denied", cls: "denied" };
+      case "file_restore":       return { label: (e.restored ? "Rolled back" : "Rollback failed") + by, cls: "rolled" };
+      case "snapshot_restore":   return { label: e.restored ? "Rolled back" : "Rollback failed", cls: "rolled" };
+      default:                   return { label: "—", cls: "none" };
+    }
+  }
+
   async function fetchJson(url) {
     const res = await fetch(url);
     if (!res.ok) throw new Error(res.statusText);
     return res.json();
   }
 
-  // ── session expansion ─────────────────────────────────────────────────────────
-  const expandedSessions = new Set();
-
-  async function toggleSession(id) {
-    const panel = document.getElementById("panel-" + id);
-    const row   = document.getElementById("row-" + id);
-    if (!panel) return;
-
-    if (panel.classList.contains("open")) {
-      panel.classList.remove("open");
-      row.classList.remove("expanded");
-      expandedSessions.delete(id);
-    } else {
-      panel.classList.add("open");
-      row.classList.add("expanded");
-      expandedSessions.add(id);
-      await loadSessionEvents(id);
-    }
+  // ── render ──
+  function renderDaemon(running) {
+    const pill = document.getElementById("daemon-pill");
+    const text = document.getElementById("daemon-text");
+    pill.classList.remove("running", "stopped");
+    pill.classList.add(running ? "running" : "stopped");
+    text.textContent = running ? "daemon running" : "daemon stopped";
   }
 
-  async function loadSessionEvents(id) {
-    const panel = document.getElementById("panel-" + id);
-    if (!panel) return;
-    try {
-      const session = await fetchJson("/api/sessions/" + id);
-      const events = session.events || [];
-      if (events.length === 0) {
-        panel.innerHTML = '<div class="events-panel-heading">No events</div>';
-        return;
-      }
-      const rows = events.map((e) => {
-        const levelBadge = e.level
-          ? `<span class="level-badge level-${e.level}">${e.level}</span>`
-          : "";
-        const detail = e.command
-          ? `<span class="event-detail">${escHtml(e.command)}</span>${levelBadge}`
-          : (e.stashRef ? `<span class="event-detail">${escHtml(e.stashRef)}</span>` : "");
-        return `<div class="event-item">
-          <span class="event-ts">${fmtTime(e.ts)}</span>
-          <span class="event-type ${e.event || ""}">${eventLabel(e.event)}</span>
-          ${detail}
-        </div>`;
-      }).join("");
-      panel.innerHTML = '<div class="events-panel-heading">Events</div>' + rows;
-    } catch (err) {
-      panel.innerHTML = `<div class="events-panel-heading" style="color:var(--blocked)">Failed to load: ${escHtml(err.message)}</div>`;
-    }
-  }
+  function renderProjects(projects) {
+    const root = document.getElementById("projects");
 
-  function escHtml(str) {
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-
-  // ── render ────────────────────────────────────────────────────────────────────
-  function renderSessions(sessions) {
-    const table = document.getElementById("sessions-table");
-
-    if (!sessions || sessions.length === 0) {
-      table.innerHTML = `<div class="empty-state">
-        <div class="big">📋</div>
-        <p>No sessions yet — start an agent with <code>agentguard &lt;agent&gt;</code></p>
-      </div>`;
+    if (!projects || projects.length === 0) {
+      root.innerHTML = `<div class="empty-state"><div class="big">📋</div>
+        <p>No sessions in this range. Start the daemon or run <code>agentguard &lt;agent&gt;</code>.</p></div>`;
       return;
     }
 
-    const header = `<div class="table-header">
-      <span>Session</span>
-      <span>Agent</span>
-      <span>Started</span>
-      <span style="text-align:right">Duration</span>
-      <span style="text-align:right">Intercepted</span>
-      <span style="text-align:right">Blocked</span>
-      <span style="text-align:right">Approved</span>
-    </div>`;
+    root.innerHTML = projects.map((g) => {
+      const path = g.fullPath
+        ? `<span class="project-path">${escHtml(g.fullPath)}</span>`
+        : (g.project === "(command-line)"
+            ? `<span class="project-path">interactive runs (no project path)</span>`
+            : `<span class="project-path">not in watchPaths</span>`);
 
-    const rows = sessions.map((s) => {
-      const isExpanded = expandedSessions.has(s.sessionId);
-      return `
-        <div class="session-row ${isExpanded ? "expanded" : ""}" id="row-${escHtml(s.sessionId)}"
-             onclick="toggleSession('${escHtml(s.sessionId)}')">
-          <span class="session-id">${shortId(s.sessionId)}</span>
-          <span class="session-agent">${escHtml(s.agent || "—")}</span>
-          <span class="session-time">${fmtTime(s.startTime)}</span>
-          <span class="session-duration">${fmtDuration(s.startTime, s.endTime)}</span>
-          <span class="session-intercept">${s.intercepted}</span>
-          <span class="session-blocked">${s.blocked}</span>
-          <span class="session-approved">${s.approved}</span>
+      const cards = g.sessions.map((s) => `
+        <div class="session-card" data-session-id="${escHtml(s.sessionId)}">
+          <div class="session-meta">
+            <span class="session-start">${escHtml(fmtStartLocal(s.startTime))}</span>
+            <span class="session-sub"><span class="session-id">${shortId(s.sessionId)}</span> · ${escHtml(s.agent || "—")}</span>
+          </div>
+          <div class="col">
+            <span class="col-label">Duration</span>
+            <span class="col-value">${fmtDuration(s.durationMs)}</span>
+          </div>
+          <div class="col">
+            <span class="col-label">Sensitive events</span>
+            <span class="col-value sensitive">${s.sensitiveCount}</span>
+          </div>
+          <div class="badge-cell">${levelBadge(s.maxLevel)}</div>
+        </div>`).join("");
+
+      return `<div class="project-group">
+        <div class="project-head">
+          <span class="project-name">${escHtml(g.project)}</span>
+          ${path}
+          <span class="project-count">${g.sessions.length} session${g.sessions.length === 1 ? "" : "s"}</span>
         </div>
-        <div class="events-panel ${isExpanded ? "open" : ""}" id="panel-${escHtml(s.sessionId)}">
-          <div class="events-panel-heading" style="color:var(--muted)">Click to load events…</div>
-        </div>`;
+        ${cards}
+      </div>`;
     }).join("");
 
-    table.innerHTML = header + rows;
-
-    // Reload events for any previously-expanded sessions
-    for (const id of expandedSessions) {
-      loadSessionEvents(id);
+    // Open the per-session timeline (TASK-008).
+    for (const card of root.querySelectorAll(".session-card")) {
+      card.addEventListener("click", () => openSession(card.dataset.sessionId));
     }
   }
 
-  function renderStats(stats) {
-    document.getElementById("stat-sessions").textContent    = stats.totalSessions    ?? "—";
-    document.getElementById("stat-intercepted").textContent = stats.totalIntercepted ?? "—";
-    document.getElementById("stat-blocked").textContent     = stats.totalBlocked     ?? "—";
-    document.getElementById("stat-approved").textContent    = stats.totalApproved    ?? "—";
+  // ── most touched sensitive files (TASK-010) ──
+  function renderTopFiles(files) {
+    const root = document.getElementById("top-files");
+    if (!files || files.length === 0) {
+      root.innerHTML = `<div class="tf-empty">(none in this period)</div>`;
+      return;
+    }
+    const header = `<div class="tf-header">
+      <span>File</span><span>Touched</span><span>Max level</span><span>Last seen</span>
+    </div>`;
+    const rows = files.map((f) => `
+      <div class="tf-row">
+        <span class="tf-file" title="${escHtml(f.file)}">${escHtml(f.file)}</span>
+        <span class="tf-count">${f.count}</span>
+        <span>${levelBadge(f.maxLevel)}</span>
+        <span class="tf-last">${escHtml(fmtStartLocal(f.lastSeen))}</span>
+      </div>`).join("");
+    root.innerHTML = header + rows;
   }
 
-  // ── polling ───────────────────────────────────────────────────────────────────
+  // ── session detail / timeline ──
+  let openSessionId = null;
+
+  function showListView() {
+    openSessionId = null;
+    document.getElementById("detail-view").classList.add("hidden");
+    document.getElementById("list-view").classList.remove("hidden");
+    refresh();
+  }
+
+  async function openSession(id) {
+    if (!id) return;
+    openSessionId = id;
+    document.getElementById("list-view").classList.add("hidden");
+    document.getElementById("detail-view").classList.remove("hidden");
+    await renderTimeline(id);
+  }
+
+  async function renderTimeline(id) {
+    const timeline = document.getElementById("timeline");
+    let session;
+    try {
+      session = await fetchJson("/api/sessions/" + id);
+    } catch (err) {
+      timeline.innerHTML = `<div class="empty-state">Failed to load session: ${escHtml(err.message)}</div>`;
+      return;
+    }
+
+    document.getElementById("detail-main").textContent =
+      "Session " + shortId(id) + " · " + (session.agent || "—");
+    document.getElementById("detail-sub").textContent =
+      "Started " + fmtStartLocal(session.startTime) +
+      "  ·  " + (session.events ? session.events.length : 0) + " events";
+
+    const events = (session.events || [])
+      .slice()
+      .sort((a, b) => new Date(a.ts || 0) - new Date(b.ts || 0));
+
+    if (events.length === 0) {
+      timeline.innerHTML = `<div class="empty-state">No events recorded for this session.</div>`;
+      return;
+    }
+
+    const header = `<div class="tl-header">
+      <span>Time</span><span>Type</span><span>File / command</span>
+      <span>Level</span><span>Action</span>
+    </div>`;
+
+    const rows = events.map((e) => {
+      const type = eventType(e);
+      const action = eventAction(e);
+      return `<div class="tl-row">
+        <span class="tl-time">${fmtClock(e.ts)}</span>
+        <span class="tl-type ${type.cls}">${escHtml(type.label)}</span>
+        <span class="tl-detail" title="${escHtml(eventDetail(e))}">${escHtml(eventDetail(e)) || "—"}</span>
+        <span>${levelBadge(e.level)}</span>
+        <span class="tl-action ${action.cls}">${escHtml(action.label)}</span>
+      </div>`;
+    }).join("");
+
+    timeline.innerHTML = header + rows;
+  }
+
+  document.getElementById("back-btn").addEventListener("click", showListView);
+
+  // ── filters ──
+  document.getElementById("filters").addEventListener("click", (e) => {
+    const btn = e.target.closest(".filter-btn");
+    if (!btn) return;
+    currentRange = btn.dataset.range;
+    for (const b of document.querySelectorAll(".filter-btn")) {
+      b.classList.toggle("active", b === btn);
+    }
+    refresh();
+  });
+
+  // ── project selector (TASK-009) ──
+  // Render the cached project groups, narrowed to the selected project.
+  function renderFiltered() {
+    const groups = selectedProject === "all"
+      ? lastGroups
+      : lastGroups.filter((g) => g.project === selectedProject);
+    renderProjects(groups);
+  }
+
+  // Rebuild the <select> options from /api/projects, preserving the current
+  // selection.  Skips the DOM rewrite when the option set is unchanged so the
+  // 5s poll never clobbers an open dropdown.
+  async function populateProjects() {
+    const sel = document.getElementById("project-select");
+    let data;
+    try { data = await fetchJson("/api/projects"); } catch { return; }
+    const projects = data.projects || [];
+    const wanted = ["all", ...projects.map((p) => p.project)];
+    const current = Array.from(sel.options).map((o) => o.value);
+    if (current.join(" ") === wanted.join(" ")) return;
+    sel.innerHTML = `<option value="all">All projects</option>` +
+      projects.map((p) => `<option value="${escHtml(p.project)}">${escHtml(p.project)}</option>`).join("");
+    // Restore the prior selection if it still exists; otherwise reset to all.
+    if (wanted.includes(selectedProject)) {
+      sel.value = selectedProject;
+    } else {
+      selectedProject = "all";
+      sel.value = "all";
+    }
+  }
+
+  document.getElementById("project-select").addEventListener("change", (e) => {
+    selectedProject = e.target.value;
+    renderFiltered();
+  });
+
+  // ── polling ──
   async function refresh() {
     try {
-      const [stats, sessions] = await Promise.all([
-        fetchJson("/api/stats"),
-        fetchJson("/api/sessions"),
-      ]);
-      renderStats(stats);
-      renderSessions(sessions);
+      const status = await fetchJson("/api/daemon-status");
+      renderDaemon(status.running);
+    } catch (err) {
+      console.warn("Daemon status refresh failed:", err.message);
+    }
+    // While viewing a session, keep its timeline fresh; otherwise refresh the list.
+    if (openSessionId) {
+      renderTimeline(openSessionId).catch(() => {});
+      return;
+    }
+    await populateProjects();
+    try {
+      const data = await fetchJson("/api/sessions?range=" + currentRange);
+      lastGroups = data.projects || [];
+      renderFiltered();
     } catch (err) {
       console.warn("Dashboard refresh failed:", err.message);
+    }
+    try {
+      const tf = await fetchJson("/api/top-files?range=" + currentRange);
+      renderTopFiles(tf.files);
+    } catch (err) {
+      console.warn("Top files refresh failed:", err.message);
     }
   }
 

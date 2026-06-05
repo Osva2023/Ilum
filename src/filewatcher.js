@@ -15,9 +15,11 @@
  */
 
 import chokidar from "chokidar";
+import fs from "fs";
 import path from "path";
 import chalk from "chalk";
-import { logDetected, logIntercepted, logSessionEnd, logSnapshotRestore } from "./logger.js";
+import { log, logDetected, logIntercepted, logSessionEnd, logSnapshotRestore, syncToServer } from "./logger.js";
+import { isMemoryFile, scanMemoryFile } from "./memory-scanner.js";
 import { decodeFileEvent } from "./decoder.js";
 import { bus } from "./event-bus.js";
 import { evaluate } from "./correlator.js";
@@ -27,7 +29,13 @@ import { restoreSnapshot } from "./snapshot.js";
 import { isSensitive } from "./sensitive.js";
 import {
   isNotifierConfigured,
+  isEmailConfigured,
+  isSlackConfigured,
+  isDiscordConfigured,
   meetsThreshold,
+  sendEmailAlert,
+  sendSlackAlert,
+  sendDiscordAlert,
   sendFileChangeAlert,
   sendSystemNotification,
 } from "./notifier.js";
@@ -54,6 +62,20 @@ function riskLevel(filePath) {
   if (/^\.aider\.(conf\.ya?ml|tags\.cache)/.test(basename)) return "HIGH";
   if (/^(agent-memory|memories)\.json$/.test(basename)) return "HIGH";
   return "WARN";
+}
+
+// Record the result of an agent-memory content scan to the audit log (TASK-021).
+// Always logged (suspicious or not) for observability.
+function logMemoryScan(rel, scan, agent, watchPath) {
+  log({
+    event: "memory_scan",
+    file: rel,
+    suspicious: scan.suspicious,
+    patterns: scan.patterns,
+    severity: scan.severity,
+    agent,
+    watchPath,
+  });
 }
 
 // ─── Telegram deferral check ─────────────────────────────────────────────────
@@ -183,7 +205,24 @@ export function startFileWatcher({
     // rule further down awaits an interactive prompt.  fileChanges + stats
     // updates are sync and order-independent.
     const sensitive = isSensitive(rel);
-    const level = sensitive ? riskLevel(rel) : "SAFE";
+    let level = sensitive ? riskLevel(rel) : "SAFE";
+    let sensitiveReason = "Sensitive file modified by agent";
+
+    // ── Agent-memory content scan (TASK-021) ──────────────────────────────────
+    // For sensitive agent-memory files (CLAUDE.md, .cursorrules, .hermes/,
+    // .claude/, .aider.*) read the content and scan for prompt-injection /
+    // poisoning. A hit escalates the level to CRITICAL so it flows through the
+    // audit log, threshold gate, and every alert channel below.
+    let memoryScan = null;
+    if (sensitive && event !== "deleted" && isMemoryFile(rel)) {
+      let content = "";
+      try { content = fs.readFileSync(filePath, "utf8"); } catch {}
+      memoryScan = scanMemoryFile(rel, content);
+      if (memoryScan.suspicious) {
+        level = "CRITICAL";
+        sensitiveReason = "Possible prompt injection in agent memory file";
+      }
+    }
 
     fileChanges.push({ event, file: rel, level, time: new Date().toISOString() });
 
@@ -200,10 +239,15 @@ export function startFileWatcher({
       });
 
       if (action === "dedup") {
-        logIntercepted({ command: `${event}: ${rel}`, level, reason: "Sensitive file modified by agent", agent });
+        syncToServer(logIntercepted({ command: `${event}: ${rel}`, level, reason: sensitiveReason, agent, watchPath: cwd }), config);
+        if (memoryScan) logMemoryScan(rel, memoryScan, agent, cwd);
         console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel} (already alerted this session)`));
       } else if (action === "fire") {
-        logIntercepted({ command: `${event}: ${rel}`, level, reason: "Sensitive file modified by agent", agent });
+        syncToServer(logIntercepted({ command: `${event}: ${rel}`, level, reason: sensitiveReason, agent, watchPath: cwd }), config);
+        if (memoryScan) logMemoryScan(rel, memoryScan, agent, cwd);
+        if (memoryScan?.suspicious) {
+          console.error(chalk.red(`[AgentGuard] ⚠️  memory scan: possible prompt injection in ${rel} — ${memoryScan.patterns.join("; ")}`));
+        }
         console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel}`));
 
         // Gate noisy out-of-band channels (Telegram + macOS popup) on the
@@ -234,6 +278,33 @@ export function startFileWatcher({
               pending.updateMessageText(changeId, text);
             })
             .catch(() => {});
+        }
+
+        // Email alert (informational, no rollback) — fire-and-forget.  Gated
+        // on passesThreshold and isEmailConfigured, independent of Telegram so
+        // either channel can be enabled on its own (e.g. the daemon forces
+        // Telegram off but email may still be on).
+        if (passesThreshold && isEmailConfigured(config)) {
+          sendEmailAlert(
+            { file: rel, level, event, sessionId, agent, project: path.basename(cwd) },
+            config
+          ).catch(() => {});
+        }
+
+        // Slack / Discord webhook alerts (informational, no rollback) —
+        // fire-and-forget. Each gated on passesThreshold and its own
+        // webhookUrl, independent of the other channels.
+        if (passesThreshold && isSlackConfigured(config)) {
+          sendSlackAlert(
+            { file: rel, level, event, sessionId, project: path.basename(cwd) },
+            config
+          ).catch(() => {});
+        }
+        if (passesThreshold && isDiscordConfigured(config)) {
+          sendDiscordAlert(
+            { file: rel, level, event, sessionId, project: path.basename(cwd) },
+            config
+          ).catch(() => {});
         }
 
         // macOS native notification — fire-and-forget.  Threshold gate is
@@ -272,6 +343,10 @@ export function startFileWatcher({
         level: rule.level,
         reason: rule.description,
         ruleId: rule.id,
+        // The watched root this correlation fired under — lets the dashboard
+        // attribute the incident to a project the same way as sensitive-file
+        // events above.  Flows through logDetected() (deferred + audit-only).
+        watchPath: cwd,
       };
 
       // When notifications are configured AND pending.listUnresolved() has an
@@ -282,7 +357,7 @@ export function startFileWatcher({
       // so deferred correlations stay observable and distinguishable.
       if (shouldDeferToTelegram({ config, rule, bus, pending })) {
         console.error(chalk.gray("[AgentGuard] decision deferred to Telegram"));
-        logDetected(incident, agent, { deferredTo: "telegram" });
+        syncToServer(logDetected(incident, agent, { deferredTo: "telegram" }), config);
         continue;
       }
 

@@ -19,6 +19,10 @@
 // TODO: make this configurable via agentguard.config.json when allowlists are implemented
 const BUILD_ARTIFACT_PATHS = [
   ".next/",
+  ".next/dev/",
+  ".next/server/",
+  ".next/static/",
+  ".next/cache/",
   "dist/",
   "build/",
   "out/",

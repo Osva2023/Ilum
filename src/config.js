@@ -23,8 +23,8 @@
  *   DEFAULT_CONFIG  →  policy pack (if set)  →  project/user config file
  */
 
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { readFileSync, existsSync, writeFileSync, mkdirSync, statSync } from "fs";
+import { join, resolve, dirname } from "path";
 import { homedir } from "os";
 
 // ─── policy packs ────────────────────────────────────────────────────────────
@@ -97,6 +97,23 @@ export const DEFAULT_CONFIG = {
       botToken: "",
       chatId: "",
     },
+    email: {
+      /**
+       * Informational-only SMTP email channel (no rollback buttons).
+       * Set enabled:true and provide smtp.host + at least one `to` recipient.
+       */
+      enabled: false,
+      smtp: {
+        host: "",
+        port: 465,
+        user: "",
+        pass: "",
+        /** TLS on connect (port 465). Set false for STARTTLS (e.g. port 587). */
+        secure: true,
+      },
+      /** Recipient(s): a string or an array of strings. */
+      to: "",
+    },
     system: {
       /**
        * macOS-only native notifications for HIGH/CRITICAL detections.
@@ -104,12 +121,41 @@ export const DEFAULT_CONFIG = {
        */
       enabled: process.platform === "darwin",
     },
+    dailyReport: {
+      /**
+       * When true, the daemon sends `agentguard report --days=1` as a plain-text
+       * Telegram message once a day at `hour` (local time). Requires Telegram
+       * credentials (notifications.telegram.botToken/chatId or env vars).
+       */
+      enabled: false,
+      /** Local hour (0–23) to send the daily report. */
+      hour: 8,
+    },
+    slack: {
+      /** Slack incoming-webhook URL. Set it to enable informational Slack alerts. */
+      webhookUrl: "",
+    },
+    discord: {
+      /** Discord webhook URL. Set it to enable informational Discord alerts. */
+      webhookUrl: "",
+    },
   },
   /**
    * Directories to watch when running the daemon (bin/agentguard-daemon.js).
    * Ignored by the interactive CLI.  Supports ~/ expansion.
    */
   watchPaths: [],
+  /**
+   * Team Plan: forward each logged event to a central server (TASK-023).
+   * Both fields must be set to enable syncing; otherwise it is a no-op.
+   *   serverUrl — base URL of the agentguard-server deploy, e.g.
+   *               "https://agentguard.up.railway.app"
+   *   token     — bearer token matching the server's AGENTGUARD_TOKEN
+   */
+  team: {
+    serverUrl: "",
+    token: "",
+  },
 };
 
 // ─── loader ──────────────────────────────────────────────────────────────────
@@ -189,11 +235,95 @@ export function mergeConfig(defaults, overrides) {
         ...defaults.notifications.telegram,
         ...(overrides.notifications?.telegram ?? {}),
       },
+      email: {
+        ...defaults.notifications.email,
+        ...(overrides.notifications?.email ?? {}),
+        // Deep-merge smtp so partial overrides keep the unspecified defaults.
+        smtp: {
+          ...defaults.notifications.email.smtp,
+          ...(overrides.notifications?.email?.smtp ?? {}),
+        },
+      },
       system: {
         ...defaults.notifications.system,
         ...(overrides.notifications?.system ?? {}),
       },
+      dailyReport: {
+        ...defaults.notifications.dailyReport,
+        ...(overrides.notifications?.dailyReport ?? {}),
+      },
+      slack: {
+        ...defaults.notifications.slack,
+        ...(overrides.notifications?.slack ?? {}),
+      },
+      discord: {
+        ...defaults.notifications.discord,
+        ...(overrides.notifications?.discord ?? {}),
+      },
     },
     watchPaths: overrides.watchPaths ?? [...defaults.watchPaths],
+    team: {
+      ...defaults.team,
+      ...(overrides.team ?? {}),
+    },
   };
+}
+
+// ─── watchPath mutation (agentguard add-path) ──────────────────────────────────
+
+/** Expand a leading "~" to the home directory and resolve to an absolute path. */
+export function expandPath(p) {
+  if (typeof p !== "string" || !p) return null;
+  if (p === "~" || p.startsWith("~/")) {
+    return resolve(homedir(), p === "~" ? "." : p.slice(2));
+  }
+  return resolve(p);
+}
+
+/**
+ * Add a directory to the `watchPaths` array of the config file at `configPath`.
+ * Handles the full read → validate → write cycle for `agentguard add-path`.
+ *
+ *   • `newPath` is ~-expanded and resolved to an absolute path.
+ *   • The path must exist and be a directory, else nothing is written.
+ *   • Existing entries are compared on their absolute form, so a path already
+ *     watched (even spelled differently, e.g. "~/x" vs "/home/me/x") is a no-op.
+ *   • All other config keys are preserved.
+ *
+ * @param {string} configPath  Absolute path to the JSON config file.
+ * @param {string} newPath     Directory to add (~ allowed).
+ * @returns {{ status: "added"|"exists"|"invalid", ok: boolean, path: string, watchPaths: string[] }}
+ *   `ok` is true only on "added". `path` is the resolved absolute path (or the
+ *   raw input when it could not be resolved). `watchPaths` is the resulting
+ *   list on success, or the current list otherwise.
+ */
+export function addWatchPath(configPath, newPath) {
+  const abs = expandPath(newPath);
+  if (!abs) return { status: "invalid", ok: false, path: newPath, watchPaths: [] };
+
+  // Read current config first so we can report the existing list on any outcome.
+  let cfg = {};
+  if (existsSync(configPath)) {
+    try {
+      cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    } catch {
+      cfg = {};
+    }
+  }
+  const current = Array.isArray(cfg.watchPaths)
+    ? cfg.watchPaths.filter((p) => typeof p === "string")
+    : [];
+
+  let isDir = false;
+  try { isDir = statSync(abs).isDirectory(); } catch {}
+  if (!isDir) return { status: "invalid", ok: false, path: abs, watchPaths: current };
+
+  if (current.some((p) => expandPath(p) === abs)) {
+    return { status: "exists", ok: false, path: abs, watchPaths: current };
+  }
+
+  const watchPaths = [...current, abs];
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, JSON.stringify({ ...cfg, watchPaths }, null, 2) + "\n");
+  return { status: "added", ok: true, path: abs, watchPaths };
 }

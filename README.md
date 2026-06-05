@@ -264,6 +264,35 @@ Under launchd the daemon is registered as `com.agentguard.daemon` with `RunAtLoa
 
 ---
 
+## Menu bar app (macOS)
+
+AgentGuard ships with a small Electron tray app that lives in the macOS menu bar. It surfaces daemon liveness at a glance and gives you one-click access to start, stop, and inspect activity — without dropping into a terminal.
+
+```bash
+agentguard tray              # launches the menu bar app (detached)
+```
+
+The tray installs its own Electron runtime under `tray/node_modules`, so the first run requires a one-time install:
+
+```bash
+cd tray && npm install
+```
+
+**Interaction model:**
+
+- **Left-click** the shield icon → a 320×400 popup opens anchored under the icon, with:
+  - A status pill (green `Running` / red `Stopped`)
+  - The list of `watchPaths` from `~/.agentguard/config.json`
+  - The 5 most recent daemon-originated audit entries (time, file, severity badge)
+  - **View full report** — opens `agentguard report` in a new Terminal window
+  - **Start daemon** / **Stop daemon** — toggles based on current state
+- **Right-click** the icon → minimal context menu with daemon status and Quit
+- The popup hides on blur (like a native menu bar item) and refreshes automatically when the daemon's state changes
+
+Electron is declared as an `optionalDependency` of the root package, so global installs of `agentguard-dev` do not pull it in unless the user opts into the tray.
+
+---
+
 ## Audit-only mode
 
 When you want to observe behavior before enabling enforcement — or if interactive prompts are too disruptive for your current workflow — run in audit-only mode:
@@ -451,7 +480,7 @@ The file watcher and Post-Action Review are the primary and most reliable defens
 
 **Tested primarily with Claude Code.** Other agents (Codex CLI, aider, Continue) have not been tested extensively in real sessions. Edge cases are expected.
 
-**No allowlists or scoped exceptions yet.** You cannot currently say "always allow writes to `src/generated/`" without disabling rules entirely. Per-directory or per-rule sensitivity overrides are not yet implemented.
+**No allowlists or scoped exceptions.** You cannot currently say "always allow writes to `src/generated/`" without disabling rules entirely. Per-directory or per-rule sensitivity overrides are not implemented.
 
 ---
 
@@ -567,36 +596,19 @@ node test/config.test.js
 Stack: Pure Node.js ESM, no TypeScript, no build step.
 Runtime: `chalk`, `chokidar`, `node-pty`, `express`. Dev: `jest`.
 
----
+### Releasing
 
-## Roadmap
+Bump the version, publish to npm, then commit and push the version bump:
 
-**Done:**
-- [x] PTY command interceptor + log-based fallback
-- [x] File watcher (catches `--print` mode agents)
-- [x] Post-Action Review — per-file diff + keep/rollback
-- [x] Correlation rule engine — 6 multi-event rules with suppression
-- [x] Unified deny path — restore always runs on deny, restore result logged
-- [x] Incident preview before approval prompt (source-specific context)
-- [x] Audit log with full incident lifecycle (detected / approved / denied / restored)
-- [x] Audit-only mode — observe without blocking (`auditOnly: true` / `--audit-only`)
-- [x] Policy packs — named presets: `dev`, `strict`, `ci`
-- [x] Local web dashboard
-- [x] Persistent background daemon — file watcher runs permanently, monitoring configured directories without requiring an active agentguard session (`agentguard daemon start`). Auto-starts on login via launchd on macOS (`agentguard daemon install`).
-- [x] Telegram approve/deny — respond to file change alerts directly from Telegram with inline buttons to keep or rollback the change.
-- [x] First-run setup wizard — `agentguard init` configures watch paths, shell aliases, and the launchd daemon interactively.
-- [x] npm publish — installable globally via `npm install -g agentguard-dev`.
+```bash
+npm version 0.3.0 --no-git-tag-version
+npm publish
+git add package.json
+git commit -m "chore: release 0.3.0"
+git push
+```
 
-**Not yet implemented:**
-- [ ] Intent context — compare agent actions against your original prompt; alert when the agent touches something outside declared scope
-- [ ] Signed / remote audit — hash-chained entries, optional log forwarding for compliance
-- [ ] Optional Linux eBPF backend — kernel-level telemetry for silent commands
-- [ ] Verified multi-agent testing — Codex CLI, aider, Continue need real sessions
-- [ ] Demo video / GIF
-- [ ] IDE plugin — VS Code and IntelliJ extensions that provide file watcher coverage for agent sessions running inside the IDE, where the CLI wrapper is not available.
-- [ ] Allowlists and scoped path exceptions — allow writes to specific directories without disabling rules entirely. Example: always allow changes to `src/generated/` or `dist/`.
-- [ ] Team plan — centralized policy server where an admin defines rules and all team members run under them. Shared audit log and dashboard for managers. Use cases: compliance, onboarding, scope drift in monorepos.
-- [ ] Token and cost tracking — capture token usage reported by agents at session end, aggregate by developer and project, report actual AI costs. Useful for CTOs and finance teams managing AI spend at scale.
+`npm version` rewrites `package.json` without creating a git tag; the explicit `git commit` keeps the release commit's message style consistent with the rest of the history.
 
 ---
 

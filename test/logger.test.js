@@ -88,6 +88,18 @@ describe("logDetected()", () => {
     assert.equal(entry.ruleId, "RULE_001");
     assert.equal(entry.command, undefined, "command should be absent when not in incident");
   });
+
+  it("includes watchPath when present on incident, omits it otherwise (TASK-009)", () => {
+    const lines = captureLines();
+    logDetected(
+      { source: "correlation", level: "HIGH", reason: "mass delete", ruleId: "MASS_DEL", watchPath: "/home/me/proj-a" },
+      "daemon"
+    );
+    assert.equal(lastEntry(lines).watchPath, "/home/me/proj-a");
+
+    logDetected({ source: "command", level: "HIGH", reason: "rm", command: "rm -rf /" }, "codex");
+    assert.equal(lastEntry(lines).watchPath, undefined, "watchPath absent when not on incident");
+  });
 });
 
 describe("logIncidentApproved()", () => {
@@ -126,6 +138,13 @@ describe("legacy command helpers (backward compat)", () => {
     const lines = captureLines();
     logIntercepted({ command: "rm foo", level: "HIGH", reason: "rm", agent: "codex" });
     assert.equal(lastEntry(lines).event, "command_intercepted");
+    assert.equal(lastEntry(lines).watchPath, undefined, "watchPath absent when not provided");
+  });
+
+  it("logIntercepted includes watchPath when provided (TASK-009)", () => {
+    const lines = captureLines();
+    logIntercepted({ command: "modified: .env", level: "HIGH", reason: "Sensitive file modified by agent", agent: "daemon", watchPath: "/home/me/proj-a" });
+    assert.equal(lastEntry(lines).watchPath, "/home/me/proj-a");
   });
 
   it("logApproved writes event=command_approved", () => {

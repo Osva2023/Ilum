@@ -18,6 +18,12 @@ import {
   editAlertResolved,
   sendSystemNotification,
   meetsThreshold,
+  isEmailConfigured,
+  sendEmailAlert,
+  isSlackConfigured,
+  isDiscordConfigured,
+  sendSlackAlert,
+  sendDiscordAlert,
 } from "../src/notifier.js";
 
 let passed = 0;
@@ -186,6 +192,31 @@ await testAsync(
       assert.ok(msg.includes("rm -rf ./src"), "message has command");
       assert.ok(msg.includes("/approve_abc12345"), "message has approve command");
       assert.ok(msg.includes("/deny_abc12345"), "message has deny command");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+);
+
+// 5b. sendTelegramAlert — raw `text` is sent verbatim (TASK-013 daily report)
+await testAsync(
+  "sendTelegramAlert() sends raw text verbatim when text provided",
+  async () => {
+    let capturedBody;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, opts) => {
+      capturedBody = JSON.parse(opts.body);
+      return { ok: true };
+    };
+    try {
+      const config = {
+        notifications: { telegram: { enabled: true, botToken: "t", chatId: "c" } },
+      };
+      const report = "AgentGuard Report — 2026-05-29\n(today)\n\nSessions: 2";
+      await sendTelegramAlert({ text: report }, config);
+      assert.strictEqual(capturedBody.text, report, "body is the raw text");
+      assert.ok(!capturedBody.text.includes("/approve_"), "no templated footer");
+      assert.ok(!capturedBody.text.includes("🚨 AgentGuard Alert"), "no templated header");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -514,6 +545,212 @@ await testAsync(
   }
 );
 
+// ─── Email notifier (TASK-012) ────────────────────────────────────────────────
+
+const emailConfig = (over = {}) => ({
+  notifications: {
+    email: {
+      enabled: true,
+      smtp: { host: "smtp.example.com", port: 465, user: "u@example.com", pass: "secret", secure: true },
+      to: ["a@x.com", "b@y.com"],
+      ...over,
+    },
+  },
+});
+
+test("isEmailConfigured → false when disabled", () => {
+  assert.strictEqual(isEmailConfigured(emailConfig({ enabled: false })), false);
+});
+
+test("isEmailConfigured → false when host missing", () => {
+  assert.strictEqual(isEmailConfigured(emailConfig({ smtp: { host: "" } })), false);
+});
+
+test("isEmailConfigured → false when no recipients", () => {
+  assert.strictEqual(isEmailConfigured(emailConfig({ to: [] })), false);
+  assert.strictEqual(isEmailConfigured(emailConfig({ to: "" })), false);
+});
+
+test("isEmailConfigured → true with enabled + host + recipient (string or array)", () => {
+  assert.strictEqual(isEmailConfigured(emailConfig()), true);
+  assert.strictEqual(isEmailConfigured(emailConfig({ to: "one@x.com" })), true);
+});
+
+// Build a fake nodemailer transport that captures the createTransport options
+// and the sendMail message — no real SMTP, no nodemailer dependency exercised.
+function captureTransport() {
+  const cap = {};
+  const createTransport = (opts) => {
+    cap.transportOpts = opts;
+    return {
+      sendMail: async (msg) => {
+        cap.message = msg;
+        return { messageId: "test-id" };
+      },
+    };
+  };
+  return { cap, createTransport };
+}
+
+await testAsync("sendEmailAlert → subject, recipients, body, transport opts", async () => {
+  const { cap, createTransport } = captureTransport();
+  const out = await sendEmailAlert(
+    { file: ".env", level: "HIGH", event: "modified", sessionId: "abc12345def", agent: "claude", project: "project-name" },
+    emailConfig(),
+    { createTransport }
+  );
+
+  assert.strictEqual(out.sent, true);
+  // Subject format: "[AgentGuard] HIGH: .env modified in project-name"
+  assert.strictEqual(out.subject, "[AgentGuard] HIGH: .env modified in project-name");
+  assert.strictEqual(cap.message.subject, out.subject);
+  assert.strictEqual(cap.message.to, "a@x.com, b@y.com");
+
+  // Plain-text body mirrors the Telegram fields.
+  const t = cap.message.text;
+  assert.ok(t.includes(".env"), "text has file");
+  assert.ok(t.includes("HIGH"), "text has level");
+  assert.ok(t.includes("modified"), "text has event");
+  assert.ok(t.includes("abc12345"), "text has short session");
+  assert.ok(/Time:\s+\d{4}-\d{2}-\d{2}T/.test(t), "text has ISO timestamp");
+
+  // HTML body present + informational (no rollback wording).
+  assert.ok(cap.message.html.includes("AgentGuard Alert"), "html header");
+  assert.ok(/no action/i.test(cap.message.html), "html is informational");
+
+  // Transport opts: secure defaults true, auth from smtp user/pass.
+  assert.strictEqual(cap.transportOpts.host, "smtp.example.com");
+  assert.strictEqual(cap.transportOpts.secure, true);
+  assert.deepStrictEqual(cap.transportOpts.auth, { user: "u@example.com", pass: "secret" });
+});
+
+await testAsync("sendEmailAlert → derives project from file path when not provided", async () => {
+  const { cap, createTransport } = captureTransport();
+  await sendEmailAlert(
+    { file: "beach-flag/.env.local", level: "CRITICAL", event: "created", sessionId: "s" },
+    emailConfig(),
+    { createTransport }
+  );
+  assert.strictEqual(cap.message.subject, "[AgentGuard] CRITICAL: beach-flag/.env.local created in beach-flag");
+});
+
+await testAsync("sendEmailAlert → secure:false honored (STARTTLS)", async () => {
+  const { cap, createTransport } = captureTransport();
+  await sendEmailAlert(
+    { file: ".env", level: "HIGH", event: "modified", sessionId: "s" },
+    emailConfig({ smtp: { host: "smtp.example.com", port: 587, secure: false } }),
+    { createTransport }
+  );
+  assert.strictEqual(cap.transportOpts.secure, false);
+  assert.strictEqual(cap.transportOpts.port, 587);
+  assert.strictEqual(cap.transportOpts.auth, undefined, "no auth when user/pass absent");
+});
+
+await testAsync("sendEmailAlert → skips (no transport) when not configured", async () => {
+  let created = false;
+  const createTransport = () => { created = true; return { sendMail: async () => ({}) }; };
+  const out = await sendEmailAlert(
+    { file: ".env", level: "HIGH", event: "modified", sessionId: "s" },
+    { notifications: { email: { enabled: false } } },
+    { createTransport }
+  );
+  assert.deepStrictEqual(out, { sent: false, skipped: "not-configured" });
+  assert.strictEqual(created, false, "createTransport must not be called");
+});
+
+// ─── Webhook notifiers: Slack / Discord (TASK-020) ────────────────────────────
+
+const slackCfg = { notifications: { slack: { webhookUrl: "https://hooks.slack.com/services/T/B/X" } } };
+const discordCfg = { notifications: { discord: { webhookUrl: "https://discord.com/api/webhooks/1/abc" } } };
+
+test("isSlackConfigured / isDiscordConfigured reflect webhookUrl presence", () => {
+  assert.strictEqual(isSlackConfigured(slackCfg), true);
+  assert.strictEqual(isSlackConfigured({}), false);
+  assert.strictEqual(isSlackConfigured({ notifications: { slack: { webhookUrl: "" } } }), false);
+  assert.strictEqual(isDiscordConfigured(discordCfg), true);
+  assert.strictEqual(isDiscordConfigured({}), false);
+});
+
+function captureFetch() {
+  const cap = {};
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    cap.url = url;
+    cap.body = JSON.parse(opts.body);
+    return { ok: true, text: async () => "" };
+  };
+  return { cap, restore: () => { globalThis.fetch = original; } };
+}
+
+await testAsync("sendSlackAlert → posts Block Kit payload to the webhook", async () => {
+  const { cap, restore } = captureFetch();
+  try {
+    const out = await sendSlackAlert(
+      { file: ".env", level: "HIGH", event: "modified", sessionId: "abc12345", project: "proj" },
+      slackCfg
+    );
+    assert.strictEqual(out.sent, true);
+    assert.strictEqual(cap.url, slackCfg.notifications.slack.webhookUrl);
+    assert.strictEqual(cap.body.blocks[0].type, "header");
+    assert.strictEqual(cap.body.blocks[0].text.text, "[AgentGuard] HIGH: .env modified");
+    const fields = cap.body.blocks[1].fields.map((f) => f.text);
+    assert.ok(fields.includes("*File:*\n.env"));
+    assert.ok(fields.includes("*Project:*\nproj"));
+    assert.ok(fields.includes("*Level:*\nHIGH"));
+    assert.ok(fields.some((t) => t.startsWith("*Time:*\n")));
+  } finally {
+    restore();
+  }
+});
+
+await testAsync("sendDiscordAlert → posts embed with level color + fields", async () => {
+  const { cap, restore } = captureFetch();
+  try {
+    const out = await sendDiscordAlert(
+      { file: ".env", level: "HIGH", event: "modified", sessionId: "abc12345", project: "proj" },
+      discordCfg
+    );
+    assert.strictEqual(out.sent, true);
+    assert.strictEqual(cap.url, discordCfg.notifications.discord.webhookUrl);
+    const embed = cap.body.embeds[0];
+    assert.strictEqual(embed.title, "[AgentGuard] HIGH: .env modified");
+    assert.strictEqual(embed.color, 0xe67e22); // HIGH = orange
+    const names = embed.fields.map((f) => f.name);
+    assert.deepStrictEqual(names, ["File", "Project", "Level", "Time"]);
+    assert.strictEqual(embed.fields[0].value, ".env");
+    assert.strictEqual(embed.fields[1].value, "proj");
+  } finally {
+    restore();
+  }
+});
+
+await testAsync("sendDiscordAlert → CRITICAL=red, WARN=yellow", async () => {
+  for (const [level, color] of [["CRITICAL", 0xe74c3c], ["WARN", 0xf39c12]]) {
+    const { cap, restore } = captureFetch();
+    try {
+      await sendDiscordAlert({ file: "x", level, event: "modified", sessionId: "s" }, discordCfg);
+      assert.strictEqual(cap.body.embeds[0].color, color, `${level} color`);
+    } finally {
+      restore();
+    }
+  }
+});
+
+await testAsync("sendSlackAlert / sendDiscordAlert → skip when not configured", async () => {
+  let called = false;
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => { called = true; return { ok: true, text: async () => "" }; };
+  try {
+    const s = await sendSlackAlert({ file: ".env", level: "HIGH", event: "modified", sessionId: "s" }, {});
+    const d = await sendDiscordAlert({ file: ".env", level: "HIGH", event: "modified", sessionId: "s" }, {});
+    assert.deepStrictEqual(s, { sent: false, skipped: "not-configured" });
+    assert.deepStrictEqual(d, { sent: false, skipped: "not-configured" });
+    assert.strictEqual(called, false, "fetch must not be called");
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 // ─── sendSystemNotification ───────────────────────────────────────────────────
 
 function withPlatform(platform, fn) {
@@ -587,6 +824,12 @@ test("sendSystemNotification → HIGH on darwin spawns osascript with correct ar
     assert.strictEqual(calls[0].cmd, "osascript");
     assert.strictEqual(calls[0].argv[0], "-e");
     const script = calls[0].argv[1];
+    // Notification must be attributed to System Events (faceless background agent)
+    // so a click never opens Script Editor. (TASK-003)
+    assert.ok(
+      script.startsWith('tell application "System Events" to display notification'),
+      `script should route through System Events: ${script}`,
+    );
     assert.ok(script.includes("🔶 AgentGuard HIGH"), `script missing HIGH prefix: ${script}`);
     assert.ok(script.includes("— .env"), `script missing title context: ${script}`);
     assert.ok(script.includes("modified by claude"), `script missing message: ${script}`);

@@ -1,6 +1,6 @@
 {
   "name": "agentguard-dev",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Universal shell wrapper that intercepts dangerous commands from AI coding agents",
   "type": "module",
   "main": "src/index.js",
@@ -12,14 +12,19 @@
     "src/",
     "shell-wrapper/main.go",
     "shell-wrapper/build.sh",
-    "shell-wrapper/agentguard-shell.sh"
+    "shell-wrapper/agentguard-shell.sh",
+    "tray/main.js",
+    "tray/preload.js",
+    "tray/index.html",
+    "tray/package.json",
+    "tray/make-icon.cjs"
   ],
   "scripts": {
     "start": "node bin/agentguard",
-    "test": "node test/classifier.test.js && node test/notifier.test.js && node test/config.test.js && node test/event-bus.test.js && node --test test/decoder.test.js && node --test test/suppression.test.js && node --test test/correlator.test.js && node --test test/enforcement.test.js && node --test test/snapshot-restore.test.js && node --test test/filewatcher-dedup.test.js && node --test test/report.test.js && node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
-    "test:classifier": "node test/classifier.test.js",
-    "test:notifier": "node test/notifier.test.js",
-    "test:jest": "node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
+    "test": "export NODE_ENV=test && node test/classifier.test.js && node test/notifier.test.js && node test/config.test.js && node test/event-bus.test.js && node --test test/decoder.test.js && node --test test/suppression.test.js && node --test test/correlator.test.js && node --test test/enforcement.test.js && node --test test/snapshot-restore.test.js && node --test test/filewatcher-dedup.test.js && node --test test/report.test.js && node --test test/daily-report.test.js && node --test test/init.test.js && node --test test/memory-scanner.test.js && node --test test/tray-control.test.js && node --test test/dashboard.test.js && node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
+    "test:classifier": "NODE_ENV=test node test/classifier.test.js",
+    "test:notifier": "NODE_ENV=test node test/notifier.test.js",
+    "test:jest": "NODE_ENV=test node --experimental-vm-modules node_modules/.bin/jest test/approval-diff.test.js",
     "dashboard": "node bin/agentguard dashboard",
     "postinstall": "cd shell-wrapper && ./build.sh || true",
     "prepublishOnly": "npm test"
@@ -27,11 +32,12 @@
   "dependencies": {
     "chalk": "^5.3.0",
     "chokidar": "^4.0.0",
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "nodemailer": "^8.0.10"
   },
   "optionalDependencies": {
-    "node-pty": "^1.1.0",
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",
