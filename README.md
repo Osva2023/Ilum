@@ -6,7 +6,7 @@
 
 A terminal safety layer for AI coding agents.
 
-AgentGuard wraps any CLI coding agent — Claude Code, Codex, aider — and watches what it does while it works. When behavior looks risky or out of scope, it intervenes: pausing execution, showing you a preview of what would happen, and asking for your approval before anything destructive continues.
+Ilum wraps any CLI coding agent — Claude Code, Codex, aider — and watches what it does while it works. When behavior looks risky or out of scope, it intervenes: pausing execution, showing you a preview of what would happen, and asking for your approval before anything destructive continues.
 
 It is **not an editor plugin**. It does not run inside VS Code or Cursor. It works in the terminal, where CLI agents actually execute.
 
@@ -14,7 +14,7 @@ It is **not an editor plugin**. It does not run inside VS Code or Cursor. It wor
 
 ## In action
 
-![AgentGuard intercepting a CRITICAL mass-delete](docs/screenshots/critical-intercept.png)
+![Ilum intercepting a CRITICAL mass-delete](docs/screenshots/critical-intercept.png)
 ![Post-Action Review](docs/screenshots/post-action-review.png)
 ![Session Summary](docs/screenshots/session-summary.png)
 
@@ -29,7 +29,7 @@ AI coding agents are powerful, but they routinely do more than you asked:
 - chaining several low-risk actions into a dangerous pattern
 - writing to credentials, rewriting git history, or bumping engine requirements as a "helpful" side effect
 
-The principle behind AgentGuard:
+The principle behind Ilum:
 
 > **Do not block what you explicitly asked for. Catch the unintended side effects.**
 
@@ -43,7 +43,7 @@ The principle behind AgentGuard:
 
 The agent wired up the routes, created the client wrapper, added the import — then pulled `OPENAI_API_KEY=sk-proj-...` from earlier in the session and wrote it to `.env`.
 
-AgentGuard surfaced the diff in the Post-Action Review. The key looked right, but it was an old key from a previous project, already rotated. Rolled back, set the correct key manually. Without the diff, that broken key would have shipped.
+Ilum surfaced the diff in the Post-Action Review. The key looked right, but it was an old key from a previous project, already rotated. Rolled back, set the correct key manually. Without the diff, that broken key would have shipped.
 
 ### The cleanup that wasn't
 
@@ -51,7 +51,7 @@ AgentGuard surfaced the diff in the Post-Action Review. The key looked right, bu
 
 The agent scanned, found files with no obvious imports, and queued `rm -rf ./utils/legacy`.
 
-AgentGuard flagged it **CRITICAL** before the command ran. The directory stayed. A background job imports `legacy/pdf-parser.js` — nobody had touched it in eight months.
+Ilum flagged it **CRITICAL** before the command ran. The directory stayed. A background job imports `legacy/pdf-parser.js` — nobody had touched it in eight months.
 
 ### The force push
 
@@ -59,7 +59,7 @@ AgentGuard flagged it **CRITICAL** before the command ran. The directory stayed.
 
 The agent resolved the conflict cleanly. Then it pushed with `git push --force`.
 
-AgentGuard caught the command before execution. Three teammates had pushed to that branch that morning. A force push would have silently rewritten their work.
+Ilum caught the command before execution. Three teammates had pushed to that branch that morning. A force push would have silently rewritten their work.
 
 ### The silent `package.json` edit
 
@@ -67,11 +67,11 @@ AgentGuard caught the command before execution. Three teammates had pushed to th
 
 The agent installed `express-rate-limit` and wired it up correctly. It also bumped `engines` in `package.json` from `>=16` to `>=20` because the package uses modern syntax.
 
-AgentGuard showed the diff in the Post-Action Review. The deployment environment was pinned to Node 18. That bump would have broken the next deploy.
+Ilum showed the diff in the Post-Action Review. The deployment environment was pinned to Node 18. That bump would have broken the next deploy.
 
 ---
 
-## What it protects today
+## What it protects
 
 Three defense layers run in parallel during every session.
 
@@ -81,7 +81,7 @@ The agent runs inside a PTY wrapper (or a log-based fallback). Every shell comma
 
 ```
 ┌───────────────────────────────────────────────────────┐
-│  AgentGuard — CRITICAL RISK OPERATION                 │
+│  Ilum — CRITICAL RISK OPERATION                       │
 ├───────────────────────────────────────────────────────┤
 │  Command:  rm -rf dist/                               │
 │  Risk:     CRITICAL                                   │
@@ -118,6 +118,12 @@ Watches for dangerous *combinations* of events within a time window. Six built-i
 
 CRITICAL correlation incidents block the session the same way command incidents do. A suppression system prevents repeated alerts for the same rule within its detection window.
 
+### Memory security scanner
+
+Agents read instructions from memory files — `CLAUDE.md`, `.cursorrules`, `.aider.*`, and the contents of `.claude/` and `.hermes/` directories. A poisoned memory file is a prompt-injection vector: it can silently steer an agent into exfiltrating secrets or running destructive commands in a later session.
+
+When a watched memory file is created or modified, Ilum reads its content and scans for prompt-injection and poisoning patterns. A hit escalates the event to **CRITICAL**, so it flows through the audit log, the severity threshold, and every alert channel — surfacing a tampered instruction file before the next agent run picks it up.
+
 ---
 
 ## Severity levels
@@ -128,13 +134,13 @@ CRITICAL correlation incidents block the session the same way command incidents 
 | `HIGH` | Approval prompt shown, session paused |
 | `WARN` | Approval prompt shown |
 
-CRITICAL incidents are never quietly deferred. If there is no interactive TTY (CI environment, piped output), AgentGuard denies and terminates rather than allowing the session to continue.
+CRITICAL incidents are never quietly deferred. If there is no interactive TTY (CI environment, piped output), Ilum denies and terminates rather than allowing the session to continue.
 
 ---
 
 ## Approval preview
 
-Before showing the prompt, AgentGuard builds a context preview sized for the terminal:
+Before showing the prompt, Ilum builds a context preview sized for the terminal:
 
 | Situation | Preview content |
 |---|---|
@@ -149,7 +155,7 @@ Before showing the prompt, AgentGuard builds a context preview sized for the ter
 
 ## Snapshot and restore
 
-At the start of every session, AgentGuard runs `git stash -u` to capture the full working tree. When an incident is denied, the snapshot is restored automatically before the session terminates — regardless of whether the deny was triggered by autoDeny, a no-TTY CRITICAL, or an interactive choice.
+At the start of every session, Ilum runs `git stash -u` to capture the full working tree. When an incident is denied, the snapshot is restored automatically before the session terminates — regardless of whether the deny was triggered by autoDeny, a no-TTY CRITICAL, or an interactive choice.
 
 Restore result (success or failure) is written to the audit log as a `snapshot_restore` event.
 
@@ -162,10 +168,10 @@ Snapshot is skipped when: the directory is not a git repository, the working tre
 **Requires Node.js 18 or later.** Git is strongly recommended — snapshot and rollback require it.
 
 ```bash
-npm install -g ilum
+npm install -g ozilum
 ```
 
-The CLI is published on npm as [`ilum`](https://www.npmjs.com/package/ilum). After install, the `ilum` command is on your `PATH` (the `agentguard` command is also installed as an alias for backward compatibility).
+The CLI is published on npm as [`ozilum`](https://www.npmjs.com/package/ozilum). After install, the `ilum` command is on your `PATH` (the `agentguard` command is also installed as an alias for backward compatibility).
 
 To work from source (track `main`, hack on rules, etc.):
 
@@ -176,7 +182,7 @@ npm install
 npm link
 ```
 
-`node-pty` native bindings compile during `npm install` via `node-gyp`. If the build fails, AgentGuard falls back to log-based interception automatically — no extra configuration needed.
+`node-pty` native bindings compile during `npm install` via `node-gyp`. If the build fails, Ilum falls back to log-based interception automatically — no extra configuration needed.
 
 ### First-run setup
 
@@ -240,7 +246,7 @@ agentguard dashboard
 
 ## Background daemon
 
-AgentGuard can run as a persistent file-watcher daemon that monitors configured directories without an active agent session. It uses audit-only mode (no prompts, no enforcement, no Telegram alerts) and writes every sensitive file change to `~/.agentguard/audit.log`.
+Ilum can run as a persistent file-watcher daemon that monitors configured directories without an active agent session. It uses audit-only mode (no prompts, no enforcement, no Telegram alerts) and writes every sensitive file change to `~/.agentguard/audit.log`.
 
 ```bash
 agentguard daemon start      # launch in the background (detached)
@@ -268,9 +274,59 @@ Under launchd the daemon is registered as `com.agentguard.daemon` with `RunAtLoa
 
 ---
 
+## Team Plan
+
+A single developer watches one machine. A team watches all of them in one place.
+
+With a team server configured, the daemon forwards every event it logs to a central server, tagged with the machine's hostname. Multiple machines report to the same server, and a shared web dashboard shows the combined activity from every machine in real time.
+
+**How it works:**
+
+- Each daemon keeps writing to its own local `~/.agentguard/audit.log` exactly as before.
+- After every logged detection, it also `POST`s the event to your team server — **fire-and-forget**, with a short timeout, so syncing never blocks or slows the daemon. If the server is unreachable, local logging is unaffected.
+- Each event carries `os.hostname()`, so the dashboard can group and filter by machine.
+- The dashboard is a web page served by the team server — open it in any browser, from anywhere.
+
+**Configure it** in `~/.agentguard/config.json`:
+
+```json
+{
+  "team": {
+    "serverUrl": "https://ilum-team.up.railway.app",
+    "token": "your-shared-team-token"
+  }
+}
+```
+
+Both fields are required to enable syncing — leave either empty and the daemon stays fully local (no-op). The `token` must match the `AGENTGUARD_TOKEN` configured on the server. `agentguard daemon status` shows `Team sync: ✓ connected to <serverUrl>` when it's active.
+
+The server itself lives in `agentguard-server/` — an Express + SQLite app that you deploy once (e.g. on Railway) and point every machine at.
+
+---
+
+## Team Dashboard
+
+The team server serves a web dashboard at its root URL — for example:
+
+```
+https://ilum-team.up.railway.app
+```
+
+It shows events from **all** reporting machines together:
+
+- A **machine selector** — view everything, or filter to a single hostname
+- A **time-range filter** — today, last 7 days, last 30 days
+- An **event table** — time, machine, file/command, severity badge, and event type
+- Live **counters** — total events in range and number of active machines
+- **Auto-refresh** every 10 seconds
+
+Access is gated by the same team token (entered once in the browser and kept locally), so only people with the token can read the team's activity.
+
+---
+
 ## Menu bar app (macOS)
 
-AgentGuard ships with a small Electron tray app that lives in the macOS menu bar. It surfaces daemon liveness at a glance and gives you one-click access to start, stop, and inspect activity — without dropping into a terminal.
+Ilum ships with a small Electron tray app that lives in the macOS menu bar. It surfaces daemon liveness at a glance and gives you one-click access to start, stop, and inspect activity — without dropping into a terminal.
 
 ```bash
 agentguard tray              # launches the menu bar app (detached)
@@ -293,7 +349,7 @@ cd tray && npm install
 - **Right-click** the icon → minimal context menu with daemon status and Quit
 - The popup hides on blur (like a native menu bar item) and refreshes automatically when the daemon's state changes
 
-Electron is declared as an `optionalDependency` of the root package, so global installs of `agentguard-dev` do not pull it in unless the user opts into the tray.
+Electron is declared as an `optionalDependency` of the root package, so global installs of `ozilum` do not pull it in unless the user opts into the tray.
 
 ---
 
@@ -316,7 +372,7 @@ In audit-only mode:
 - No snapshot restore is triggered
 - The session summary shows "AUDIT-ONLY MODE" and "observed" instead of "intercepted"
 
-This is useful for a first run on a new project, or for teams that want to understand what AgentGuard would flag before committing to enforcement.
+This is useful for a first run on a new project, or for teams that want to understand what Ilum would flag before committing to enforcement.
 
 ---
 
@@ -348,12 +404,25 @@ Create `agentguard.config.json` in your project directory, or `~/.agentguard/con
     "path": "~/.agentguard/audit.log"
   },
   "notifications": {
+    "minLevel": "HIGH",
     "telegram": {
       "enabled": false,
       "botToken": "",
       "chatId": "",
       "extraChatIds": []
-    }
+    },
+    "email": {
+      "enabled": false,
+      "smtp": { "host": "", "port": 465, "user": "", "pass": "", "secure": true },
+      "to": ""
+    },
+    "slack": { "webhookUrl": "" },
+    "discord": { "webhookUrl": "" },
+    "system": { "enabled": true }
+  },
+  "team": {
+    "serverUrl": "",
+    "token": ""
   }
 }
 ```
@@ -368,7 +437,14 @@ Create `agentguard.config.json` in your project directory, or `~/.agentguard/con
 | `rules.custom` | `[]` | Additional rules: `{ pattern, level, reason }` |
 | `snapshot.enabled` | `true` | Create a git stash at session start |
 | `snapshot.restoreOnDeny` | `true` | Restore snapshot when an incident is denied |
-| `notifications.telegram` | disabled | Send Telegram alerts on CRITICAL incidents |
+| `notifications.minLevel` | `"HIGH"` | Minimum severity that triggers out-of-band alerts |
+| `notifications.telegram` | disabled | Telegram alerts with inline Keep / Rollback buttons |
+| `notifications.email` | disabled | Informational SMTP email alerts (no rollback) |
+| `notifications.slack` | disabled | Slack alerts via incoming-webhook URL |
+| `notifications.discord` | disabled | Discord alerts via webhook URL |
+| `notifications.system` | macOS on | Native macOS notifications for HIGH/CRITICAL |
+| `team.serverUrl` | `""` | Central team server to sync events to (see Team Plan) |
+| `team.token` | `""` | Bearer token matching the team server |
 
 ### Policy packs
 
@@ -381,6 +457,22 @@ Set `"policy"` to apply a behavior preset. Any other fields you set override the
 | `ci` | `[]` | `["CRITICAL", "HIGH", "WARN"]` | CI pipelines — all risky commands fail the build immediately |
 
 Precedence: **defaults → pack → your config**. Your explicit settings always win.
+
+---
+
+## Notifications
+
+Beyond the in-terminal prompt and audit log, Ilum can push alerts out of band over several channels. Each is independent — enable any combination. `notifications.minLevel` (default `HIGH`) gates the noisy channels: only events at or above that severity are sent, while the audit log and terminal output always record everything.
+
+| Channel | Config key | What it does |
+|---|---|---|
+| **Telegram** | `notifications.telegram` | Interactive alerts with inline **Keep / Rollback** buttons — act on a change from your phone. See [Telegram approval](#telegram-approval). |
+| **Email** | `notifications.email` | Informational SMTP email per incident (no rollback). Set `smtp.host` + at least one `to` recipient. |
+| **Slack** | `notifications.slack` | Posts to a Slack channel via an incoming-webhook URL. |
+| **Discord** | `notifications.discord` | Posts to a Discord channel via a webhook URL. |
+| **macOS native** | `notifications.system` | Native macOS notification banners for HIGH/CRITICAL detections. On by default on macOS; a no-op elsewhere. |
+
+Telegram is the only interactive channel (it carries the Keep / Rollback actions). Email, Slack, Discord, and macOS notifications are informational — they tell you something happened so you can open the dashboard or terminal to act.
 
 ---
 
@@ -459,82 +551,29 @@ jq 'select(.event == "snapshot_restore")' ~/.agentguard/audit.log
 
 ---
 
-## Current limitations
+## Scope & boundaries
 
-AgentGuard is in early beta. These are known, honest gaps:
+Ilum infers behavior from visible terminal output and filesystem changes. Knowing where that visibility ends tells you where to keep your own attention.
 
-**Command interception varies by agent architecture.**
-
-AgentGuard uses three layers of defense. Their effectiveness depends on the agent:
+**Command interception varies by agent architecture.** The defense layers have different reach depending on how an agent runs:
 
 | Layer | Claude Code | Codex | Copilot CLI |
 |-------|-------------|-------|-------------|
 | Command interceptor (PTY) | Partial — catches narrated commands | No — Rust binary | No — TUI bypasses PTY |
-| Node runtime hook (--require) | Pending verification | No — Rust binary, not Node | Unknown |
 | File watcher | ✓ Works | ✓ Works | ✓ Works |
 | Post-Action Review + rollback | ✓ Works | ✓ Works | ✓ Works |
 
-The file watcher and Post-Action Review are the primary and most reliable defenses across all agents. Command interception in real time is best-effort and agent-dependent.
+The file watcher and Post-Action Review are the primary defenses and work across all agents. Real-time command interception is best-effort and agent-dependent.
 
-**No kernel-level visibility.** AgentGuard does not monitor OS-level events (`execve`, `unlink`, `openat`, `connect`). It infers behavior from visible terminal output and filesystem changes, not from what actually executed at the OS level.
+**No kernel-level visibility.** Ilum does not monitor OS-level events (`execve`, `unlink`, `openat`, `connect`). It works from terminal output and filesystem changes, not from what executed at the OS level.
 
-**File monitoring has scope limits.** The file watcher only sees changes in the host filesystem under the watched path. Changes inside isolated containers that are not bind-mounted, or non-file side effects (database writes, cloud API calls), are not visible.
+**File monitoring is scoped to the host filesystem.** The file watcher sees changes under the watched path on the host. Changes inside isolated containers that are not bind-mounted, or non-file side effects (database writes, cloud API calls), are outside its view.
 
-**Rollback is git-dependent.** Snapshot restore uses `git stash`. If the directory is not a git repo, or if the working tree was already clean, there is no snapshot to restore. Rollback also cannot revert external side effects — cloud resource changes, third-party API calls, database mutations.
-
-**Tested primarily with Claude Code.** Other agents (Codex CLI, aider, Continue) have not been tested extensively in real sessions. Edge cases are expected.
-
-**No allowlists or scoped exceptions.** You cannot currently say "always allow writes to `src/generated/`" without disabling rules entirely. Per-directory or per-rule sensitivity overrides are not implemented.
+**Rollback is git-based.** Snapshot restore uses `git stash`. If the directory is not a git repo, or the working tree was already clean, there is no snapshot to restore. Rollback reverts files, not external side effects — cloud resources, third-party API calls, database mutations.
 
 ---
 
-## Beta testers wanted
-
-If you use Claude Code, Codex, or another CLI agent regularly, these are the most useful scenarios to test:
-
-**1. Basic wrap — just observe**
-```bash
-agentguard --audit-only claude --print "add a helper function to utils.js"
-```
-Check the session summary. Look at `~/.agentguard/audit.log`. Did it see what you expected?
-
-**2. Trigger the file watcher**
-```bash
-agentguard claude --print "add a REDIS_URL environment variable to the app"
-```
-AgentGuard should surface the `.env` diff in the Post-Action Review.
-
-**3. Test rollback**
-Same as above, but choose `[R]ollback` in the review. Verify the file is restored to its previous state.
-
-**4. Trigger command interception**
-Ask your agent to delete unused files. Watch if AgentGuard catches the `rm` before it runs.
-
-**5. Vague-prompt test**
-```bash
-agentguard claude --print "clean up this project and remove anything unused"
-```
-Count how many files AgentGuard logged vs. how many you expected. This is useful signal about scope drift.
-
-**6. Non-git directory**
-Run in a directory without git. AgentGuard should handle gracefully — no crash, snapshot step skipped with a clear message.
-
-**7. CI / no-TTY**
-Run in an environment with no interactive terminal. CRITICAL incidents should terminate the process with a non-zero exit code.
-
-**What feedback is most useful right now:**
-
-- False positives: things AgentGuard flagged that were obviously fine
-- False negatives: risky things that ran without being caught
-- Crashes or unexpected exits
-- Agents or workflows where AgentGuard didn't work at all
-- Friction: prompts that interrupted work in an annoying way
-
-**Where to report:** Open an issue at [github.com/Osva2023/agentguard](https://github.com/Osva2023/agentguard/issues). A short description of what you did and what happened is enough.
-
----
-
-## What AgentGuard does not do
+## What Ilum does not do
 
 - It is not an IDE plugin or editor extension
 - It does not replace code review
@@ -542,7 +581,7 @@ Run in an environment with no interactive terminal. CRITICAL incidents should te
 - It cannot revert cloud resources, database writes, or external API calls
 - It does not understand your intent — it detects patterns, not meaning
 
-Human judgment is still required. AgentGuard improves real-time visibility into autonomous agent behavior; it does not eliminate the need to pay attention.
+Human judgment is still required. Ilum improves real-time visibility into autonomous agent behavior; it does not eliminate the need to pay attention.
 
 ---
 
@@ -598,17 +637,17 @@ node test/config.test.js
 **338 tests across 92 suites, 0 failures.**
 
 Stack: Pure Node.js ESM, no TypeScript, no build step.
-Runtime: `chalk`, `chokidar`, `node-pty`, `express`. Dev: `jest`.
+Runtime: `chalk`, `chokidar`, `express`, `nodemailer`; `node-pty` and `electron` are optional. Dev: `jest`.
 
 ### Releasing
 
 Bump the version, publish to npm, then commit and push the version bump:
 
 ```bash
-npm version 0.3.0 --no-git-tag-version
+npm version 1.0.0 --no-git-tag-version
 npm publish
 git add package.json
-git commit -m "chore: release 0.3.0"
+git commit -m "chore: release 1.0.0"
 git push
 ```
 
@@ -618,7 +657,7 @@ git push
 
 ## Contributing
 
-Issues and feedback are welcome. **This is early — feedback is more valuable than PRs right now.** If something broke, confused you, or should exist and doesn't, open an issue.
+Issues and feedback are welcome. If something broke, confused you, or should exist and doesn't, open an issue.
 
 If you want to submit a PR: fork, branch, make the change, add a test if it touches logic, open the PR.
 
