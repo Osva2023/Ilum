@@ -1,6 +1,10 @@
-# AgentGuard
+# Ilum
 
-**A terminal safety layer for AI coding agents.**
+*formerly AgentGuard*
+
+**Ilum — watches what your AI agents do.**
+
+A terminal safety layer for AI coding agents.
 
 AgentGuard wraps any CLI coding agent — Claude Code, Codex, aider — and watches what it does while it works. When behavior looks risky or out of scope, it intervenes: pausing execution, showing you a preview of what would happen, and asking for your approval before anything destructive continues.
 
@@ -158,10 +162,10 @@ Snapshot is skipped when: the directory is not a git repository, the working tre
 **Requires Node.js 18 or later.** Git is strongly recommended — snapshot and rollback require it.
 
 ```bash
-npm install -g agentguard-dev
+npm install -g ilum
 ```
 
-The CLI is published on npm as [`agentguard-dev`](https://www.npmjs.com/package/agentguard-dev). After install, the `agentguard` command is on your `PATH`.
+The CLI is published on npm as [`ilum`](https://www.npmjs.com/package/ilum). After install, the `ilum` command is on your `PATH` (the `agentguard` command is also installed as an alias for backward compatibility).
 
 To work from source (track `main`, hack on rules, etc.):
 

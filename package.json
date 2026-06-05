@@ -1,10 +1,11 @@
 {
-  "name": "agentguard-dev",
-  "version": "0.3.0",
-  "description": "Universal shell wrapper that intercepts dangerous commands from AI coding agents",
+  "name": "ilum",
+  "version": "1.0.0",
+  "description": "Ilum — watches what your AI agents do",
   "type": "module",
   "main": "src/index.js",
   "bin": {
+    "ilum": "./bin/agentguard",
     "agentguard": "./bin/agentguard"
   },
   "files": [
