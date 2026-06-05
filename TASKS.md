@@ -289,6 +289,41 @@
 
 ---
 
+### TASK-023 — Team Plan: servidor central en Railway
+
+**Epic:** Team Plan  
+**Prioridad:** Alta  
+**Dificultad:** Media (1-2 días)  
+**Files:** nuevo repo agentguard-server/, src/daemon-control.js, bin/agentguard-daemon.js, src/config.js  
+**Scope:** 
+Parte 1 — Servidor central (repo separado agentguard-server/):
+- Express + SQLite
+- POST /api/events — recibe eventos del daemon con token auth
+- GET /api/events — retorna eventos filtrados por rango
+- GET /api/machines — lista de máquinas activas
+- GET /api/health — ping
+- Dashboard web adaptado del existente mostrando eventos 
+  de todas las máquinas con columna "machine"
+- Deploy en Railway
+
+Parte 2 — Integración en el daemon:
+- Config: team.serverUrl, team.token
+- Después de cada logIntercepted/logDetected, POST al servidor
+  en background (fire-and-forget, nunca bloquea el daemon)
+- Identificar la máquina con os.hostname()
+
+Parte 3 — Prueba con segunda máquina:
+- Instalar agentguard-dev en segunda máquina
+- Configurar team.serverUrl y team.token
+- Verificar que eventos de ambas máquinas aparecen en el 
+  dashboard de Railway
+
+**Acceptance:** El dashboard en Railway muestra eventos en 
+tiempo real de dos máquinas distintas con su hostname.  
+**Status:** TODO
+
+---
+
 ## MODO REMOTO — Tickets para ejecutar desde el teléfono
 *Estos tickets están diseñados para ser ejecutados en sesiones cortas de Claude Code remoto.
 Cada uno tiene scope acotado, archivos específicos, y criterio de éxito claro.*
