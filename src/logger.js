@@ -81,6 +81,8 @@ export function setSink(fn) {
  * Append one JSON-lines entry to the audit log (sync, fire-and-forget style).
  *
  * @param {Object} fields - Arbitrary key/value pairs merged into the entry.
+ * @returns {Object|null} The full entry that was written (so callers can forward
+ *   the exact same object elsewhere, e.g. syncToServer), or null on failure.
  */
 export function log(fields) {
   try {
@@ -90,9 +92,11 @@ export function log(fields) {
       ...fields,
     };
     _sink(JSON.stringify(entry) + "\n");
+    return entry;
   } catch (err) {
     // Logging must never crash the main process.
     process.stderr.write(`[AgentGuard] logger error: ${err.message}\n`);
+    return null;
   }
 }
 
@@ -111,7 +115,7 @@ export function logSnapshot(stashRef) {
 }
 
 export function logIntercepted({ command, level, reason, agent, watchPath }) {
-  log({
+  return log({
     event: "command_intercepted",
     command,
     level,
@@ -144,7 +148,7 @@ export function logDenied({ command, level, agent }) {
  */
 export function logDetected(incident, agent, extras = {}) {
   const { source, level, reason, command, ruleId, watchPath } = incident;
-  log({
+  return log({
     event: "incident_detected",
     source,
     level,
@@ -228,6 +232,44 @@ export function logFileRestore(result, ctx, agent) {
     ...(ctx.by !== undefined && { by: ctx.by }),
     agent,
   });
+}
+
+// ─── team server sync (TASK-023) ──────────────────────────────────────────────
+
+/**
+ * Forward one logged event to the central team server (agentguard-server).
+ *
+ * Fire-and-forget: returns immediately, never throws, never blocks the caller.
+ * No-op unless both config.team.serverUrl and config.team.token are set. The
+ * POST is tagged with this machine's hostname so the team dashboard can show a
+ * "machine" column. Aborts after 5s so a slow/unreachable server can't pile up.
+ *
+ * @param {Object} event   The exact entry returned by log()/logIntercepted()/logDetected().
+ * @param {Object} config  Loaded config (reads config.team.serverUrl / token).
+ */
+export function syncToServer(event, config) {
+  const team = config?.team;
+  if (!team || !team.serverUrl || !team.token || !event) return;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  const url = team.serverUrl.replace(/\/+$/, "") + "/api/events";
+  fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${team.token}`,
+    },
+    body: JSON.stringify({ ...event, machine: os.hostname() }),
+    signal: controller.signal,
+  })
+    .catch((err) => {
+      // Silent: a team-sync failure must never disrupt the daemon. Logged to
+      // stderr only, for observability.
+      process.stderr.write(`[AgentGuard] team sync failed: ${err.message}\n`);
+    })
+    .finally(() => clearTimeout(timeout));
 }
 
 export { LOG_FILE, AGENTGUARD_DIR };

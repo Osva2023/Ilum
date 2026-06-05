@@ -145,6 +145,17 @@ export const DEFAULT_CONFIG = {
    * Ignored by the interactive CLI.  Supports ~/ expansion.
    */
   watchPaths: [],
+  /**
+   * Team Plan: forward each logged event to a central server (TASK-023).
+   * Both fields must be set to enable syncing; otherwise it is a no-op.
+   *   serverUrl — base URL of the agentguard-server deploy, e.g.
+   *               "https://agentguard.up.railway.app"
+   *   token     — bearer token matching the server's AGENTGUARD_TOKEN
+   */
+  team: {
+    serverUrl: "",
+    token: "",
+  },
 };
 
 // ─── loader ──────────────────────────────────────────────────────────────────
@@ -251,6 +262,10 @@ export function mergeConfig(defaults, overrides) {
       },
     },
     watchPaths: overrides.watchPaths ?? [...defaults.watchPaths],
+    team: {
+      ...defaults.team,
+      ...(overrides.team ?? {}),
+    },
   };
 }
 

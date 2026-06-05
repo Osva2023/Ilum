@@ -18,7 +18,7 @@ import chokidar from "chokidar";
 import fs from "fs";
 import path from "path";
 import chalk from "chalk";
-import { log, logDetected, logIntercepted, logSessionEnd, logSnapshotRestore } from "./logger.js";
+import { log, logDetected, logIntercepted, logSessionEnd, logSnapshotRestore, syncToServer } from "./logger.js";
 import { isMemoryFile, scanMemoryFile } from "./memory-scanner.js";
 import { decodeFileEvent } from "./decoder.js";
 import { bus } from "./event-bus.js";
@@ -239,11 +239,11 @@ export function startFileWatcher({
       });
 
       if (action === "dedup") {
-        logIntercepted({ command: `${event}: ${rel}`, level, reason: sensitiveReason, agent, watchPath: cwd });
+        syncToServer(logIntercepted({ command: `${event}: ${rel}`, level, reason: sensitiveReason, agent, watchPath: cwd }), config);
         if (memoryScan) logMemoryScan(rel, memoryScan, agent, cwd);
         console.error(chalk.gray(`[AgentGuard] 📝 sensitive: ${rel} (already alerted this session)`));
       } else if (action === "fire") {
-        logIntercepted({ command: `${event}: ${rel}`, level, reason: sensitiveReason, agent, watchPath: cwd });
+        syncToServer(logIntercepted({ command: `${event}: ${rel}`, level, reason: sensitiveReason, agent, watchPath: cwd }), config);
         if (memoryScan) logMemoryScan(rel, memoryScan, agent, cwd);
         if (memoryScan?.suspicious) {
           console.error(chalk.red(`[AgentGuard] ⚠️  memory scan: possible prompt injection in ${rel} — ${memoryScan.patterns.join("; ")}`));
@@ -357,7 +357,7 @@ export function startFileWatcher({
       // so deferred correlations stay observable and distinguishable.
       if (shouldDeferToTelegram({ config, rule, bus, pending })) {
         console.error(chalk.gray("[AgentGuard] decision deferred to Telegram"));
-        logDetected(incident, agent, { deferredTo: "telegram" });
+        syncToServer(logDetected(incident, agent, { deferredTo: "telegram" }), config);
         continue;
       }
 
