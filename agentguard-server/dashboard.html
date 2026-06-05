@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgentGuard Team Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      /* OzForce Labs palette */
+      --bg-primary:    #0a0f1a;
+      --bg-secondary:  #0d1527;
+      --bg-card:       #111827;
+      --accent-cyan:   #00e5ff;
+      --accent-blue:   #0066ff;
+      --text-primary:  #ffffff;
+      --text-secondary:#94a3b8;
+      --border:        rgba(0, 229, 255, 0.12);
+      --border-hover:  rgba(0, 229, 255, 0.3);
+
+      /* alert levels */
+      --critical: #e74c3c;
+      --high:     #e67e22;
+      --warn:     #f39c12;
+
+      --green: #2ecc71;
+      --red:   #e74c3c;
+
+      --glow: 0 0 14px rgba(0, 229, 255, 0.22);
+      --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, "Consolas", monospace;
+      --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--sans);
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-primary);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .logo { display: flex; align-items: baseline; gap: 9px; }
+    .logo-shield { font-size: 20px; align-self: center; }
+    .logo-text { font-size: 17px; font-weight: 700; color: var(--text-primary); letter-spacing: 0.02em; }
+    .logo-accent { color: var(--accent-cyan); }
+    .logo-tag { font-size: 11px; color: var(--text-secondary); letter-spacing: 0.04em; }
+    .header-right { display: flex; align-items: center; gap: 16px; }
+    .clock { color: var(--text-secondary); font-size: 12px; letter-spacing: 0.08em; font-family: var(--mono); }
+    .refresh-label { color: var(--text-secondary); font-size: 11px; }
+    .refresh-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-cyan); display: inline-block; margin-right: 6px; animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .token-btn {
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 5px 12px;
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+      transition: border-color 0.15s, box-shadow 0.15s, color 0.15s;
+    }
+    .token-btn:hover { border-color: var(--border-hover); box-shadow: var(--glow); color: var(--text-primary); }
+
+    /* ── main layout ── */
+    main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+
+    /* ── stats ── */
+    .stats { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+    .stat-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 20px;
+      min-width: 150px;
+    }
+    .stat-value { font-size: 26px; font-weight: 700; color: var(--accent-cyan); font-family: var(--mono); }
+    .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); margin-top: 2px; }
+
+    /* ── toolbar ── */
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+
+    .filters { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: fit-content; }
+    .filter-btn {
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      border: none;
+      border-right: 1px solid var(--border);
+      padding: 8px 18px;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+    }
+    .filter-btn:last-child { border-right: none; }
+    .filter-btn:hover { background: rgba(0, 229, 255, 0.08); color: var(--text-primary); box-shadow: inset var(--glow); }
+    .filter-btn.active { background: var(--accent-cyan); color: #0a0f1a; font-weight: 700; }
+
+    .machine-select-wrap { display: flex; align-items: center; gap: 10px; }
+    .machine-select-wrap label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); }
+    .machine-select {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .machine-select:hover { border-color: var(--border-hover); box-shadow: var(--glow); }
+    .machine-select:focus { outline: none; border-color: var(--accent-cyan); box-shadow: var(--glow); }
+
+    /* ── events table ── */
+    .events {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .ev-header, .ev-row {
+      display: grid;
+      grid-template-columns: 150px 150px 1fr 90px 130px;
+      gap: 12px;
+      padding: 9px 16px;
+      align-items: baseline;
+    }
+    .ev-header {
+      color: var(--text-secondary);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-bottom: 1px solid var(--border);
+    }
+    .ev-row { border-bottom: 1px solid var(--border); font-size: 12px; }
+    .ev-row:last-child { border-bottom: none; }
+    .ev-row:nth-child(2n) { background: var(--bg-card); }
+    .ev-row:hover { background: rgba(0, 229, 255, 0.06); }
+    .ev-time { color: var(--text-secondary); font-family: var(--mono); }
+    .ev-machine { color: var(--accent-cyan); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ev-file { color: var(--text-primary); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ev-type { color: var(--text-secondary); }
+    .ev-type.sensitive  { color: var(--accent-cyan); }
+    .ev-type.correlation { color: var(--accent-blue); }
+
+    /* ── level badges ── */
+    .level-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      border: 1px solid transparent;
+    }
+    .level-CRITICAL { background: rgba(231, 76, 60, 0.15); color: var(--critical); border-color: rgba(231, 76, 60, 0.4); }
+    .level-HIGH     { background: rgba(230, 126, 34, 0.15); color: var(--high); border-color: rgba(230, 126, 34, 0.4); }
+    .level-WARN     { background: rgba(243, 156, 18, 0.15); color: var(--warn); border-color: rgba(243, 156, 18, 0.4); }
+    .level-none     { color: var(--text-secondary); font-size: 11px; }
+
+    /* ── empty state ── */
+    .empty-state { padding: 48px; text-align: center; color: var(--text-secondary); }
+    .empty-state .big { font-size: 32px; margin-bottom: 12px; }
+    .empty-state code { font-family: var(--mono); color: var(--accent-cyan); }
+
+    footer {
+      text-align: center;
+      padding: 24px;
+      margin-top: 40px;
+      border-top: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 11px;
+      letter-spacing: 0.03em;
+    }
+    footer a { color: var(--accent-cyan); text-decoration: none; transition: text-shadow 0.15s; }
+    footer a:hover { text-shadow: var(--glow); text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <span class="logo-shield">🛡</span>
+    <span class="logo-text">Agent<span class="logo-accent">Guard</span> Team Dashboard</span>
+    <span class="logo-tag">by OzForce Labs</span>
+  </div>
+  <div class="header-right">
+    <button class="token-btn" id="token-btn">🔑 Token</button>
+    <span class="refresh-label"><span class="refresh-dot"></span>auto-refresh 10s</span>
+    <span class="clock" id="clock"></span>
+  </div>
+</header>
+
+<main>
+  <div class="stats">
+    <div class="stat-card">
+      <div class="stat-value" id="stat-events">—</div>
+      <div class="stat-label">Events (range)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="stat-machines">—</div>
+      <div class="stat-label">Active machines</div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="filters" id="filters">
+      <button class="filter-btn" data-range="today">Hoy</button>
+      <button class="filter-btn active" data-range="7d">7 días</button>
+      <button class="filter-btn" data-range="30d">30 días</button>
+    </div>
+    <div class="machine-select-wrap">
+      <label for="machine-select">Machine</label>
+      <select id="machine-select" class="machine-select">
+        <option value="all">All machines</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="events" id="events">
+    <div class="empty-state"><div class="big">📋</div><p>Loading…</p></div>
+  </div>
+</main>
+
+<footer>
+  AgentGuard Team Dashboard by OzForce Labs ·
+  <a href="https://github.com/Osva2023/AgentGuard" target="_blank" rel="noopener">github.com/Osva2023/AgentGuard</a>
+</footer>
+
+<script>
+  let currentRange = "7d";
+  let selectedMachine = "all";
+
+  // ── token: the API is bearer-protected, so the dashboard needs the same
+  // token. Kept in localStorage; prompt once if missing. ──
+  function getToken() {
+    let t = localStorage.getItem("agentguard_token");
+    if (!t) {
+      t = prompt("Enter the AgentGuard team token:") || "";
+      if (t) localStorage.setItem("agentguard_token", t);
+    }
+    return t;
+  }
+  document.getElementById("token-btn").addEventListener("click", () => {
+    const t = prompt("AgentGuard team token:", localStorage.getItem("agentguard_token") || "");
+    if (t !== null) { localStorage.setItem("agentguard_token", t); refresh(); }
+  });
+
+  async function fetchJson(url) {
+    const res = await fetch(url, { headers: { "Authorization": "Bearer " + getToken() } });
+    if (res.status === 401) {
+      localStorage.removeItem("agentguard_token");
+      throw new Error("unauthorized — re-enter token");
+    }
+    if (!res.ok) throw new Error(res.statusText);
+    return res.json();
+  }
+
+  // ── clock ──
+  function updateClock() {
+    document.getElementById("clock").textContent = new Date().toLocaleTimeString();
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // ── helpers ──
+  function escHtml(str) {
+    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function fmtClock(ts) {
+    if (!ts) return "—";
+    const d = new Date(ts);
+    if (isNaN(d)) return "—";
+    return d.toLocaleString([], { month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  }
+  function levelBadge(level) {
+    return level
+      ? `<span class="level-badge level-${level}">${level}</span>`
+      : `<span class="level-none">—</span>`;
+  }
+  function eventType(e) {
+    if (e.source === "filewatch") return { label: "Sensitive file", cls: "sensitive" };
+    if (e.source === "correlation") return { label: "Correlation", cls: "correlation" };
+    if (e.source === "command" || (e.event || "").startsWith("command_")) return { label: "Command", cls: "" };
+    if (e.event === "session_start" || e.event === "session_end") return { label: "Session", cls: "" };
+    if (e.event === "snapshot_created" || e.event === "snapshot_restore") return { label: "Snapshot", cls: "" };
+    return { label: e.event || "event", cls: "" };
+  }
+  function eventDetail(e) {
+    if (e.file) return e.file;
+    if (e.command) return e.command;
+    if (e.reason) return e.reason;
+    if (e.message) return e.message;
+    return "";
+  }
+
+  // ── render ──
+  function renderEvents(events) {
+    const root = document.getElementById("events");
+    if (!events || events.length === 0) {
+      root.innerHTML = `<div class="empty-state"><div class="big">📋</div>
+        <p>No events in this range. Daemons POST here via <code>team.serverUrl</code>.</p></div>`;
+      return;
+    }
+    const header = `<div class="ev-header">
+      <span>Time</span><span>Machine</span><span>File / command</span>
+      <span>Level</span><span>Type</span>
+    </div>`;
+    const rows = events.map((e) => {
+      const type = eventType(e);
+      const detail = eventDetail(e);
+      return `<div class="ev-row">
+        <span class="ev-time">${fmtClock(e.ts)}</span>
+        <span class="ev-machine" title="${escHtml(e.machine || "")}">${escHtml(e.machine || "—")}</span>
+        <span class="ev-file" title="${escHtml(detail)}">${escHtml(detail) || "—"}</span>
+        <span>${levelBadge(e.level)}</span>
+        <span class="ev-type ${type.cls}">${escHtml(type.label)}</span>
+      </div>`;
+    }).join("");
+    root.innerHTML = header + rows;
+  }
+
+  // Rebuild the machine <select>, preserving selection; skip when unchanged so
+  // the 10s poll never clobbers an open dropdown.
+  function renderMachines(machines) {
+    document.getElementById("stat-machines").textContent = machines.length;
+    const sel = document.getElementById("machine-select");
+    const wanted = ["all", ...machines.map((m) => m.hostname)];
+    const current = Array.from(sel.options).map((o) => o.value);
+    if (current.join(" ") === wanted.join(" ")) return;
+    sel.innerHTML = `<option value="all">All machines</option>` +
+      machines.map((m) => `<option value="${escHtml(m.hostname)}">${escHtml(m.hostname)} (${m.count})</option>`).join("");
+    if (wanted.includes(selectedMachine)) {
+      sel.value = selectedMachine;
+    } else {
+      selectedMachine = "all";
+      sel.value = "all";
+    }
+  }
+
+  // ── controls ──
+  document.getElementById("filters").addEventListener("click", (e) => {
+    const btn = e.target.closest(".filter-btn");
+    if (!btn) return;
+    currentRange = btn.dataset.range;
+    for (const b of document.querySelectorAll(".filter-btn")) {
+      b.classList.toggle("active", b === btn);
+    }
+    refresh();
+  });
+  document.getElementById("machine-select").addEventListener("change", (e) => {
+    selectedMachine = e.target.value;
+    refresh();
+  });
+
+  // ── polling ──
+  async function refresh() {
+    try {
+      const m = await fetchJson("/api/machines");
+      renderMachines(m.machines || []);
+    } catch (err) {
+      console.warn("Machines refresh failed:", err.message);
+    }
+    try {
+      const data = await fetchJson(
+        "/api/events?range=" + currentRange + "&machine=" + encodeURIComponent(selectedMachine));
+      const events = data.events || [];
+      document.getElementById("stat-events").textContent = events.length;
+      renderEvents(events);
+    } catch (err) {
+      console.warn("Events refresh failed:", err.message);
+      document.getElementById("events").innerHTML =
+        `<div class="empty-state"><div class="big">🔒</div><p>${escHtml(err.message)}</p></div>`;
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 10000);
+</script>
+</body>
+</html>
