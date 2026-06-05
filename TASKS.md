@@ -285,7 +285,14 @@
 **Dificultad:** No es código  
 **Scope:** GoPlus Security tiene un producto llamado "AgentGuard" en npm como `@goplus/agentguard`. El nombre causa confusión. Investigar nombres alternativos: Sentinel, Vigil, WatchDog, Guardrail, FileGuard, AgentWatch, Warden. Decidir antes de crecer la base de usuarios.  
 **Acceptance:** Decisión tomada y documentada. Si se cambia: bump de versión, redirect en npm, actualizar README.  
-**Status:** INVESTIGATING
+**Status:** DECIDED  
+**Decisión:** Renombrar a **"Ilum"**
+- Inspirado en Star Wars — el planeta de hielo donde los kyber crystals 
+  nacen y esperan a su portador Jedi
+- npm package: "ilum" (verificado libre en npm)
+- GitHub repo: renombrar a `ilum` o `ozforce-ilum`
+- Tagline: "Ilum — watches what your AI agents do"
+- Ejecutar el rename antes o junto con v1.0.0
 
 ---
 
