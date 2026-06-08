@@ -176,8 +176,8 @@ The CLI is published on npm as [`ozilum`](https://www.npmjs.com/package/ozilum).
 To work from source (track `main`, hack on rules, etc.):
 
 ```bash
-git clone https://github.com/Osva2023/agentguard
-cd agentguard
+git clone https://github.com/Osva2023/Ilum
+cd Ilum
 npm install
 npm link
 ```

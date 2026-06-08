@@ -63,10 +63,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Osva2023/AgentGuard"
+    "url": "https://github.com/Osva2023/Ilum"
   },
-  "homepage": "https://github.com/Osva2023/AgentGuard#readme",
+  "homepage": "https://github.com/Osva2023/Ilum#readme",
   "bugs": {
-    "url": "https://github.com/Osva2023/AgentGuard/issues"
+    "url": "https://github.com/Osva2023/Ilum/issues"
   }
 }
