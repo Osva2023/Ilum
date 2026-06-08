@@ -1,4 +1,4 @@
-# AgentGuard — Task Board
+# Ilum — Task Board
 **Objetivo:** Cerrar v1.0.0 en estado estable y documentado antes de pasar a modo remoto.
 **Rama de trabajo:** `dev` → merge a `main` al cerrar cada semana.
 
@@ -83,7 +83,7 @@
 **Dificultad:** Fácil (30 min)  
 **Files:** `package.json`, `README.md`  
 **Scope:** Mergear dev → main. Revisar README una vez más (instrucciones de Telegram más visibles, instrucciones de tray más claras). Bump version a 1.0.0. `npm publish`. Tag en git.  
-**Acceptance:** `npm install -g agentguard-dev` instala v1.0.0. La página de npm muestra la versión correcta.  
+**Acceptance:** `npm install -g ozilum` instala v1.0.1. La página de npm muestra la versión correcta.  
 **Status:** POSTPONED  
 **Nota:** Pospuesto — publicar cuando Semana 2 esté completa.
 
@@ -320,7 +320,7 @@ Parte 2 — Integración en el daemon:
 - Identificar la máquina con os.hostname()
 
 Parte 3 — Prueba con segunda máquina:
-- Instalar agentguard-dev en segunda máquina
+- Instalar ozilum en segunda máquina
 - Configurar team.serverUrl y team.token
 - Verificar que eventos de ambas máquinas aparecen en el 
   dashboard de Railway

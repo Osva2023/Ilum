@@ -1,4 +1,4 @@
-# AgentGuard — Architecture
+# Ilum — Architecture
 
 Technical reference for the codebase. Read alongside `CLAUDE.md` (project
 conventions) and `TASKS.md` (task board). Everything here reflects the real
@@ -6,7 +6,7 @@ code under `src/` and `bin/`.
 
 ## 1. Overview
 
-AgentGuard is a guardian for AI coding agents (Codex, Claude Code, aider, …).
+Ilum is a guardian for AI coding agents (Codex, Claude Code, aider, …).
 It intercepts dangerous shell commands and watches sensitive files in real time,
 alerting via terminal / Telegram / email / macOS notification and allowing
 rollback. It runs as an interactive wrapper or as a background daemon.

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AgentGuard Team Dashboard</title>
+  <title>Ilum Team Dashboard</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -197,7 +197,7 @@
 <header>
   <div class="logo">
     <span class="logo-shield">🛡</span>
-    <span class="logo-text">Agent<span class="logo-accent">Guard</span> Team Dashboard</span>
+    <span class="logo-text">Il<span class="logo-accent">um</span> Team Dashboard</span>
     <span class="logo-tag">by OzForce Labs</span>
   </div>
   <div class="header-right">
@@ -239,7 +239,7 @@
 </main>
 
 <footer>
-  AgentGuard Team Dashboard by OzForce Labs ·
+  Ilum Team Dashboard by OzForce Labs ·
   <a href="https://github.com/Osva2023/AgentGuard" target="_blank" rel="noopener">github.com/Osva2023/AgentGuard</a>
 </footer>
 
@@ -252,13 +252,13 @@
   function getToken() {
     let t = localStorage.getItem("agentguard_token");
     if (!t) {
-      t = prompt("Enter the AgentGuard team token:") || "";
+      t = prompt("Enter the Ilum team token:") || "";
       if (t) localStorage.setItem("agentguard_token", t);
     }
     return t;
   }
   document.getElementById("token-btn").addEventListener("click", () => {
-    const t = prompt("AgentGuard team token:", localStorage.getItem("agentguard_token") || "");
+    const t = prompt("Ilum team token:", localStorage.getItem("agentguard_token") || "");
     if (t !== null) { localStorage.setItem("agentguard_token", t); refresh(); }
   });
 

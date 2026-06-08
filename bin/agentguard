@@ -18,6 +18,9 @@
  */
 
 import chalk from "chalk";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import { createSnapshot } from "../src/snapshot.js";
 import { runInterceptor } from "../src/interceptor.js";
 import { logSessionStart, LOG_FILE, sessionId } from "../src/logger.js";
@@ -27,6 +30,16 @@ import { startFileWatcher } from "../src/filewatcher.js";
 import { showPostActionReview } from "../src/reviewer.js";
 import { startListener, cleanupPendingAlerts } from "../src/telegram-listener.js";
 import { isDaemonRunning } from "../src/daemon-control.js";
+
+// Read the version from package.json at startup so the banner never drifts from
+// the published version.  Resolved relative to this file (bin/ → repo root).
+let VERSION = "";
+try {
+  const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+  VERSION = JSON.parse(readFileSync(pkgPath, "utf8")).version || "";
+} catch {
+  // Non-fatal: fall back to an empty version string in the banner.
+}
 
 // ─── parse args ───────────────────────────────────────────────────────────────
 
@@ -38,7 +51,7 @@ const [agent, ...agentArgs] = filteredArgs;
 
 if (!agent || agent === "--help" || agent === "-h") {
   console.log(`
-${chalk.bold.cyan("Ilum")} ${chalk.gray("v1.0.0")} ${chalk.gray("(formerly AgentGuard)")} — watches what your AI agents do
+${chalk.bold.cyan("Ilum")} ${chalk.gray("v" + VERSION)} ${chalk.gray("(formerly AgentGuard)")} — watches what your AI agents do
 
 ${chalk.bold("Usage:")}
   agentguard [--audit-only] <agent> [agent-args...]

@@ -1,10 +1,10 @@
-# AgentGuard — Guía para Claude Code
+# Ilum — Guía para Claude Code
 
 Contexto permanente del repo. Léelo al inicio de cada sesión (junto con `TASKS.md`).
 
 ## Qué es
 
-AgentGuard es un guardián para agentes de IA de código (Codex, Claude Code, aider, etc.).
+Ilum es un guardián para agentes de IA de código (Codex, Claude Code, aider, etc.).
 Intercepta comandos peligrosos y vigila cambios en archivos sensibles en tiempo real,
 avisando por terminal/Telegram/notificación macOS y permitiendo rollback.
 
