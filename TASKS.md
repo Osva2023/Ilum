@@ -333,6 +333,23 @@ servidor central en Railway.
 
 ---
 
+### TASK-027 — BUG: Falso positivo CRITICAL en git checkout entre ramas
+**Epic:** Estabilización  
+**Prioridad:** Alta  
+**Scope:** Cuando el agente hace git checkout de una rama a otra, Ilum dispara CRITICAL "Mass file deletion" por los archivos que git elimina del working tree. Son eliminaciones legítimas de git, no del agente.  
+**Fix:** Detectar operaciones git checkout/switch en el PTY interceptor y suprimir temporalmente la regla mass-delete durante esos eventos, o agregar contexto git al correlation engine para distinguir.  
+**Acceptance:** git checkout entre ramas no dispara mass-delete CRITICAL.
+
+---
+
+### TASK-028 — BUG: Team sync falla con "operation was aborted"
+**Epic:** Estabilización  
+**Prioridad:** Media  
+**Scope:** syncToServer falla con abort en algunas operaciones. Puede ser el AbortController de 5 segundos disparándose, o el servidor Railway con problemas de conectividad. Agregar retry logic (1 reintento) y mejor logging del error específico.  
+**Acceptance:** Sync failures loguean el error específico. Un fallo transitorio no genera dos mensajes de error consecutivos.
+
+---
+
 ## MODO REMOTO — Tickets para ejecutar desde el teléfono
 *Estos tickets están diseñados para ser ejecutados en sesiones cortas de Claude Code remoto.
 Cada uno tiene scope acotado, archivos específicos, y criterio de éxito claro.*
