@@ -350,6 +350,15 @@ servidor central en Railway.
 
 ---
 
+### TASK-029 — BUG: Stop Daemon en tray icon no detiene sesión PTY activa
+**Epic:** Estabilización  
+**Prioridad:** Alta  
+**Scope:** Cuando hay una sesión PTY corriendo en un workspace (ej: BeachFlags), el botón "Stop Daemon" del tray icon no la detiene. El daemon se apaga pero el proceso PTY sigue corriendo independientemente.  
+**Fix:** Al detener el daemon, enviar señal de terminación a todos los procesos PTY activos registrados en la sesión actual.  
+**Acceptance:** Stop Daemon desde el tray detiene también todas las sesiones PTY activas.
+
+---
+
 ## MODO REMOTO — Tickets para ejecutar desde el teléfono
 *Estos tickets están diseñados para ser ejecutados en sesiones cortas de Claude Code remoto.
 Cada uno tiene scope acotado, archivos específicos, y criterio de éxito claro.*
